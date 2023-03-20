@@ -8,7 +8,7 @@
 
 using Timepoint = quic::QuicTime;
 using Duration = quic::QuicTime::Delta;
-#ifdef USE_NS3
+#ifdef PCDN_USE_NS3
 #include "ns3clock.hpp"
 using Clock = NS3Clock;
 #else

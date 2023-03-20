@@ -103,6 +103,7 @@ void DemoTransportCtl::StopTransportController()
  */
 void DemoTransportCtl::OnSessionCreate(const fw::ID& sessionid)
 {
+    SPDLOG_TRACE("session = {}",sessionid.ToLogStr());
     if (!isRunning)
     {
         SPDLOG_WARN(" Start session before Start transport Module");
@@ -135,6 +136,7 @@ void DemoTransportCtl::OnSessionCreate(const fw::ID& sessionid)
  */
 void DemoTransportCtl::OnSessionDestory(const fw::ID& sessionid)
 {
+    SPDLOG_TRACE("session = {}",sessionid.ToLogStr());
     if (!isRunning)
     {
         SPDLOG_WARN(" Stop session before Start transport Module");
@@ -214,6 +216,7 @@ void DemoTransportCtl::OnDownloadTaskReset()
  * */
 void DemoTransportCtl::OnDataPiecesReceived(const fw::ID& sessionid, uint32_t seq, int32_t datapiece, uint64_t tic_us)
 {
+    SPDLOG_TRACE("session = {}, seq ={},datapiece = {},tic_us = {}",sessionid.ToLogStr(),seq,datapiece,tic_us);
     Timepoint recvtic = Clock::GetClock()->CreateTimeFromMicroseconds(tic_us);
     // call session control firstly to change cwnd first
     auto&& sessionItor = m_sessStreamCtlMap.find(sessionid);
@@ -236,22 +239,22 @@ void DemoTransportCtl::OnDataPiecesReceived(const fw::ID& sessionid, uint32_t se
  * kernel space or hardware buffer.
  * @param sessionid remote upside session id
  * @param datapiecesvec the data piece number, each packet may carry 1 piece or 8 pieces
- * @param senttime_ms the sent timepoint in ms
+ * @param senttime_us the sent timepoint in us
  */
 void DemoTransportCtl::OnDataSent(const fw::ID& sessionid, const std::vector<int32_t>& datapiecesvec,
         const std::vector<uint32_t>& seqvec,
-        uint64_t senttime_ms)
+        uint64_t senttime_us)
 {
     SPDLOG_DEBUG("sessionid = {}, datapieces = {}, seq = {}, senttic = {}",
             sessionid.ToLogStr(),
             datapiecesvec,
-            seqvec, senttime_ms);
+            seqvec, senttime_us);
     auto&& sessStreamItor = m_sessStreamCtlMap.find(sessionid);
     if (sessStreamItor != m_sessStreamCtlMap.end())
     {
         sessStreamItor->second->OnDataRequestPktSent(
                 seqvec,
-                datapiecesvec, Clock::GetClock()->CreateTimeFromMicroseconds(senttime_ms));
+                datapiecesvec, Clock::GetClock()->CreateTimeFromMicroseconds(senttime_us));
     }
     else
     {
@@ -263,6 +266,7 @@ void DemoTransportCtl::OnDataSent(const fw::ID& sessionid, const std::vector<int
  * */
 void DemoTransportCtl::OnLossDetectionAlarm()
 {
+    SPDLOG_TRACE("DemoTransportCtl::OnLossDetectionAlarm()");
     // Step 1: Check loss in each session
     for (auto&& sessStreamItor: m_sessStreamCtlMap)
     {
