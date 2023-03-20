@@ -276,7 +276,10 @@ public:
         Timepoint now_t = Clock::GetClock()->Now();
         AckEvent ack;
         LossEvent loss;
+        SPDLOG_TRACE("inflight: {} eventtime: {} session_id:{} ", m_inflightpktmap.DebugInfo(),
+                now_t.ToDebuggingValue(), m_sessionId.ToLogStr());
         m_lossDetect->DetectLoss(m_inflightpktmap, now_t, ack, -1, loss, m_rttstats);
+        SPDLOG_DEBUG("losses: {} session_id: {}", loss.DebugInfo(), m_sessionId.ToLogStr());
         if (loss.valid)
         {
             for (auto&& pkt: loss.lossPackets)

@@ -1,1 +1,1 @@
-/home/mininet/mmsys/mininet/MPDTrace.txt
+../mininet/MPDTrace.txt

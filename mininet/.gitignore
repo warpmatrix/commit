@@ -1,0 +1,11 @@
+*stdout
+MPDTrace.txt
+*.bak
+log/
+bin/
+*.log
+*.png
+*.ipynb
+MPDtest
+trace/
+__pycache__/

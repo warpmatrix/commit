@@ -27,9 +27,12 @@ int main(int argc, char** argv)
     // uncomment the line below to write log to file, note: the log file size will is nearly same as the resource file
     //sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>("logfile.txt"));
     auto combined_logger = std::make_shared<spdlog::logger>("mpdlogger", begin(sinks), end(sinks));
-    //combined_logger->set_pattern("[%D %H:%M:%S.%e][%s %!: %#] %v");
-    combined_logger->set_pattern("[%D %H:%M:%S.%e][%l][%s:%# %!()]%v");
-    combined_logger->set_level(spdlog::level::debug);
+    // logger format: [date hour:minute:second.millisecond][level][filename:line function()] content
+    combined_logger->set_pattern("[%D %H:%M:%S.%e][%l][%s:%# %!()] %v");
+    // another logger format
+    // combined_logger->set_pattern("[%D %H:%M:%S.%e][%s %!: %#] %v");
+    combined_logger->set_level(spdlog::level::trace);
+    // combined_logger->set_level(spdlog::level::debug);
     combined_logger->flush_on(spdlog::level::debug);
     spdlog::set_default_logger(combined_logger);
 

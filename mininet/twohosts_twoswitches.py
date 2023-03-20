@@ -99,17 +99,41 @@ if __name__ == '__main__':
         # sleep(1)  # pause for one second
     sleep(3)  # wait for three seconds to finish the connecting process
 
+    client_cmd = f'{curr_dir}/MPDtest {curr_dir}/config/downnode_mn.json'
+    client_cmd_args = shlex.split(client_cmd)
+    client_std_f = open("client_stdout", mode='w')
+
     info('*** Running CLI\n')
-    warning('TYPE exit or CTRL + D to exit!! DO NOT kill the CLI interface.There will be zombie process ')
+    warning('TYPE exit or CTRL + D to exit!! DO NOT kill the CLI interface.There will be zombie process\n')
+
+    times = 1
+    for _ in range(times):
+        """
+        To start download test, in CMD line interface,type:
+
+        client {absolute dir}/MPDtest {absolute_dir}/downnode_mn.json
+
+        Once the program is successfully stopped, you may find MPDTrace.txt inside the dir of this python file.
+        """
+        client_proc = client_node.popen(client_cmd_args, stdout=client_std_f)
+
+        last_str = os.popen('cat client_stdout | tail -n 1').read()
+        is_fin = lambda last_str : last_str.count("test finished") > 0
+        info(last_str)
+        while not is_fin(last_str):
+            sleep(10)
+            last_str = os.popen('cat client_stdout | tail -n 1').read()
+            info(last_str)
+
+        trace_res = os.popen('python ../tools/get_score.py ./MPDTrace.txt').read().split('\n')
+        score_str = [line for line in trace_res if line.count("Score")]
+        # values = [kv.split()[1] for kv in score_str.split(',')]
+        print(score_str)
+
+        client_proc.kill()
 
     CLI(net)  # start cmd line interface
-    """
-    To start download test, in CMD line interface,type: 
-
-    client {absolute dir}/MPDtest {absolute_dir}/downnode_mn.json
-    
-    Once the program is successfully stopped, you may find MPDTrace.txt inside the dir of this python file.
-    """
+    client_std_f.close()
 
     info('*** Stopping network\n')
     # client_pcap.terminate()
