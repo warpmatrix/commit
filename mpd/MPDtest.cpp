@@ -56,7 +56,14 @@ int main(int argc, char** argv)
     std::shared_ptr<DemoTransportCtlConfig> myTransportCtlConfig = std::make_shared<DemoTransportCtlConfig>();
     // these values will be passed to demo transport module
     myTransportCtlConfig->minWnd = 1;
-    myTransportCtlConfig->maxWnd = 64;
+    // myTransportCtlConfig->maxWnd = 64; // 850~900
+    myTransportCtlConfig->maxWnd = 64 + 16; // inc, 930
+    // myTransportCtlConfig->maxWnd = 64 + 32; // dec, 600~750
+    // myTransportCtlConfig->maxWnd = 32 + 16; // dec, 600~650
+    // myTransportCtlConfig->maxWnd = 32; // dec, 400~450, no queue loss
+    // myTransportCtlConfig->maxWnd = 128; // dec, 600~700
+    // myTransportCtlConfig->maxWnd = 64 + 32; // dec, 650~780
+    // myTransportCtlConfig->maxWnd = 256; // sharply dec
 
     // Create your TransportCtlFactory
     std::shared_ptr<DemoTransportCtlFactory> myTransportFactory = std::make_shared<DemoTransportCtlFactory>();
