@@ -170,6 +170,9 @@ void DemoTransportCtl::OnSessionDestory(const fw::ID& sessionid)
  */
 void DemoTransportCtl::OnPieceTaskAdding(std::vector<int32_t>& datapiecesVec)
 {
+    SPDLOG_DEBUG("[custom]: add ({}) piece task: {}",
+        datapiecesVec.size(), datapiecesVec
+    );
     for (auto&& dataPiece: datapiecesVec)
     {
         auto rt = m_downloadPieces.emplace(dataPiece);

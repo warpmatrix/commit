@@ -2,3 +2,6 @@
 MPDTrace.txt
 *.bak
 bin/
+*.log
+*.png
+*.ipynb

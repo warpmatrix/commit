@@ -196,6 +196,8 @@ public:
         for (auto&& sessionItor: m_dlsessionmap)
         {
             auto score = sessionItor.second->GetRtt();
+            SPDLOG_DEBUG("[custom] sort: {}, {}",
+                sessionItor.first.ToLogStr(), score.ToDebuggingValue());
             sortmmap.emplace(score, sessionItor.second);
         }
 
