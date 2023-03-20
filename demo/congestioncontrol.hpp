@@ -117,10 +117,10 @@ public:
         }
         if (!losses.lossPackets.empty())
         {
-            losses.losttic = eventtime;
             losses.valid = true;
-            SPDLOG_DEBUG("losses: {}", losses.DebugInfo());
         }
+        // losses.losttic = eventtime - loss_delay;
+        losses.losttic = eventtime;
     }
 
     ~DefaultLossDetectionAlgo() override
@@ -147,6 +147,9 @@ public:
     /////
     virtual uint32_t GetCWND() = 0;
 
+    virtual bool InCongestionAvoid() = 0;
+
+    virtual void OnRttInc() = 0;
 //    virtual uint32_t GetFreeCWND() = 0;
 
 };
@@ -185,6 +188,7 @@ public:
     void OnDataSent(const InflightPacket& sentpkt) override
     {
         SPDLOG_TRACE("");
+        pktWndMap[sentpkt.pieceId] = GetCWND();
     }
 
     void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) override
@@ -202,11 +206,24 @@ public:
 
     }
 
+    bool InCongestionAvoid() override
+    {
+        return !InSlowStart();
+    }    
+
     /////
     uint32_t GetCWND() override
     {
         SPDLOG_TRACE(" {}", m_cwnd);
         return m_cwnd;
+    }
+
+    void OnRttInc() override
+    {
+        SPDLOG_DEBUG("");
+        if (InSlowStart()){
+            ExitSlowStart();
+        }
     }
 
 //    virtual uint32_t GetFreeCWND() = 0;
@@ -295,10 +312,19 @@ private:
         SPDLOG_DEBUG("lossevent:{}", lossEvent.DebugInfo());
         Timepoint maxsentTic{ Timepoint::Zero() };
 
+        uint32_t maxWnd = 0;
         for (const auto& lostpkt: lossEvent.lossPackets)
         {
             maxsentTic = std::max(maxsentTic, lostpkt.sendtic);
+            maxWnd = std::max(maxWnd, pktWndMap[lostpkt.pieceId]);
+            SPDLOG_DEBUG("[custom] lostpkt: {}, cwnd: {}",
+                lostpkt.pieceId, pktWndMap[lostpkt.pieceId]
+            );
         }
+        // float loss_rate = 0.02;
+        // if (lossEvent.lossPackets.size() > std::max(int(m_cwnd * loss_rate), 3)) {
+        //     m_maxCwnd = maxWnd - lossEvent.lossPackets.size();
+        // }
 
         /** In Recovery phase, cwnd will decrease 1 pkt for each lost pkt
          *  Otherwise, cwnd will cut half.
@@ -336,4 +362,6 @@ private:
     uint32_t m_minCwnd{ 1 };
     uint32_t m_maxCwnd{ 64 };
     uint32_t m_ssThresh{ 32 };/** slow start threshold*/
+
+    std::map<DataNumber, uint32_t> pktWndMap;
 };

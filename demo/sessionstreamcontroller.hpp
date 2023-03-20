@@ -141,6 +141,11 @@ public:
         return m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
     };
 
+    bool InCongestionAvoid()
+    {
+        return m_congestionCtl->InCongestionAvoid();
+    }
+
     /// send ONE datarequest Pkt, requestting for the data pieces whose id are in spns
     bool DoRequestdata(const basefw::ID& peerid, const std::vector<int32_t>& spns)
     {
@@ -179,6 +184,8 @@ public:
         SPDLOG_TRACE("seq = {}, dataid = {}, sendtic = {}",
                 seqs,
                 dataids, sendtic.ToDebuggingValue());
+        SPDLOG_DEBUG("[custom] session_id: {}, sendtic: {}, cwnd: {}",
+            m_sessionId.ToLogStr(), sendtic.ToDebuggingValue(), m_congestionCtl->GetCWND());
         if (!isRunning)
         {
             return;
@@ -221,8 +228,16 @@ public:
             auto pkt_rtt = recvtic - inflightPkt.sendtic;
             m_rttstats.UpdateRtt(pkt_rtt, Duration::Zero(), Clock::GetClock()->Now());
             auto newsrtt = m_rttstats.smoothed_rtt();
+            SPDLOG_DEBUG("[custom] latest_rtt: {}, smooth_rtt: {}, recv_tic: {}, session_id: {}",
+                m_rttstats.latest_rtt().ToDebuggingValue(),
+                m_rttstats.smoothed_rtt().ToDebuggingValue(),
+                recvtic.ToDebuggingValue(), m_sessionId.ToLogStr()
+            );
 
-            auto oldcwnd = m_congestionCtl->GetCWND();
+            // SPDLOG_DEBUG("[custom] min_rtt: {}", m_rttstats.min_rtt().ToMicroseconds());
+            // if (1.3 * m_rttstats.min_rtt().ToMicroseconds() < newsrtt.ToMicroseconds()){
+            //     m_congestionCtl->OnRttInc();
+            // }
 
             AckEvent ackEvent;
             ackEvent.valid = true;
