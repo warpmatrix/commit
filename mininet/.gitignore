@@ -1,0 +1,4 @@
+*stdout
+MPDTrace.txt
+*.bak
+bin/

@@ -37,7 +37,7 @@ struct LossEvent
         }
 
         ss << "} "
-           << "losttic: " << losttic.ToDebuggingValue() << " ";
+           << "losttic: " << losttic.ToDebuggingValue();
         return ss.str();
     }
 };
@@ -96,8 +96,6 @@ public:
     void DetectLoss(const InFlightPacketMap& downloadingmap, Timepoint eventtime, const AckEvent& ackEvent,
             uint64_t maxacked, LossEvent& losses, RttStats& rttStats) override
     {
-        SPDLOG_TRACE("inflight: {} eventtime: {} ackEvent:{} ", downloadingmap.DebugInfo(),
-                eventtime.ToDebuggingValue(), ackEvent.DebugInfo());
         /** RFC 9002 Section 6
          * */
         Duration maxrtt = std::max(rttStats.previous_srtt(), rttStats.latest_rtt());
