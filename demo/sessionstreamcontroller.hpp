@@ -115,6 +115,16 @@ public:
         }
     }
 
+    void SetCtlWait(bool sig)
+    {
+        m_congestionCtl->SetWait(sig);
+        if (sig)
+            SPDLOG_WARN("Start waiting");
+        else
+            SPDLOG_WARN("Stop waiting");
+        
+    }
+
     bool CanSend()
     {
         SPDLOG_TRACE("");
@@ -188,6 +198,7 @@ public:
             sentpkt.seq = seqs[seqidx];
             sentpkt.pieceId = datano;
             sentpkt.sendtic = sendtic;
+            sentpkt.groupId = nowGroupID;
             m_congestionCtl->OnDataSent(sentpkt);
 
             // add to downloading queue
@@ -195,7 +206,10 @@ public:
 
             seqidx++;
         }
-
+        nowGroupID++;
+        SPDLOG_DEBUG("[custom] inflight: {} send_tic: {} session_id: {} nowGroupID: {}",
+            GetInFlightPktNum(), sendtic.ToDebuggingValue(), GetSessionID().ToLogStr(), nowGroupID
+        );
     }
 
     void OnDataPktReceived(uint32_t seq, int32_t datapiece, Timepoint recvtic)
@@ -213,6 +227,8 @@ public:
             return;
         }
 
+        bool hasSameGroupPkt = m_inflightpktmap.HasSameGroupPkt(inflightPkt.groupId);
+
         auto pkt_rtt = recvtic - inflightPkt.sendtic;
         m_rttstats.UpdateRtt(pkt_rtt, Duration::Zero(), Clock::GetClock()->Now());
         auto newsrtt = m_rttstats.smoothed_rtt();
@@ -226,6 +242,7 @@ public:
         AckEvent ackEvent;
         ackEvent.valid = true;
         ackEvent.ackPacket = inflightPkt;
+        ackEvent.isLastInGroup = hasSameGroupPkt;
         LossEvent lossEvent; // if we detect loss when ACK event, we may do loss check here.
         m_congestionCtl->OnDataAckOrLoss(ackEvent, lossEvent, m_rttstats);
 
@@ -305,6 +322,7 @@ public:
 
 private:
     bool isRunning{ false };
+    int nowGroupID{ 0 };
 
     basefw::ID m_sessionId;/** The remote peer id defines the session id*/
     basefw::ID m_taskid;/**The file id downloading*/
