@@ -5,18 +5,19 @@
 
 #include <cstdint>
 #include <chrono>
-#include "utils/thirdparty/quiche/rtt_stats.h"
 #include "basefw/base/log.h"
+#include "utils/thirdparty/quiche/rtt_stats.h"
 #include "utils/rttstats.h"
 #include "utils/transporttime.h"
 #include "utils/defaultclock.hpp"
 #include "sessionstreamcontroller.hpp"
 #include "packettype.h"
+#include "demo/utils/thirdparty/quiche/quic_time.h"
 
-enum class CongestionCtlType : uint8_t
-{
+enum class CongestionCtlType : uint8_t {
     none = 0,
-    reno = 1
+    reno,
+    bbr
 };
 
 struct LossEvent
@@ -46,20 +47,15 @@ struct AckEvent
 {
     /** since we receive packets one by one, each packet carries only one data piece*/
     bool valid{ false };
-    DataPacket ackPacket;
+    InflightPacket ackPacket;
     Timepoint sendtic{ Timepoint::Infinite() };
-    Timepoint losttic{ Timepoint::Infinite() };
 
     std::string DebugInfo() const
     {
         std::stringstream ss;
         ss << "valid: " << valid << " "
-           << "ackpkt:{"
-           << "seq: " << ackPacket.seq << " "
-           << "dataid: " << ackPacket.pieceId << " "
-           << "} "
-           << "sendtic: " << sendtic.ToDebuggingValue() << " "
-           << "losttic: " << losttic.ToDebuggingValue() << " ";
+           << "ackpkt:{" << ackPacket << "} "
+           << "sendtic: " << sendtic.ToDebuggingValue() << " ";
         return ss.str();
     }
 };
@@ -140,16 +136,13 @@ public:
     virtual CongestionCtlType GetCCtype() = 0;
 
     /////  Event
-    virtual void OnDataSent(const InflightPacket& sentpkt) = 0;
+    virtual void OnDataSent(InflightPacket& sentpkt) = 0;
 
     virtual void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) = 0;
 
     /////
     virtual uint32_t GetCWND() = 0;
 
-    virtual bool InCongestionAvoid() = 0;
-
-    virtual void OnRttInc() = 0;
 //    virtual uint32_t GetFreeCWND() = 0;
 
 };
@@ -185,7 +178,7 @@ public:
         return CongestionCtlType::reno;
     }
 
-    void OnDataSent(const InflightPacket& sentpkt) override
+    void OnDataSent(InflightPacket& sentpkt) override
     {
         SPDLOG_TRACE("");
         pktWndMap[sentpkt.pieceId] = GetCWND();
@@ -206,24 +199,11 @@ public:
 
     }
 
-    bool InCongestionAvoid() override
-    {
-        return !InSlowStart();
-    }    
-
     /////
     uint32_t GetCWND() override
     {
         SPDLOG_TRACE(" {}", m_cwnd);
         return m_cwnd;
-    }
-
-    void OnRttInc() override
-    {
-        SPDLOG_DEBUG("");
-        if (InSlowStart()){
-            ExitSlowStart();
-        }
     }
 
 //    virtual uint32_t GetFreeCWND() = 0;
@@ -364,4 +344,95 @@ private:
     uint32_t m_ssThresh{ 32 };/** slow start threshold*/
 
     std::map<DataNumber, uint32_t> pktWndMap;
+};
+
+struct BBRCongestionCtlConfig {
+    uint32_t period;
+    double peak_gain;
+};
+
+class BBRCongestionControl : public CongestionCtlAlgo {
+public:
+
+    explicit BBRCongestionControl(const BBRCongestionCtlConfig &ccConfig)
+        : RTprop(Duration::Infinite()), nextPeriodTime(Timepoint::Zero()) {
+        period = ccConfig.period;
+        peak_gain = ccConfig.peak_gain;
+
+        delivered = 0;
+        cwnd_gain = 1.0;
+        period_cnt = 0;
+    }
+
+    CongestionCtlType GetCCtype() override {
+        return CongestionCtlType::bbr;
+    }
+
+    void OnDataSent(InflightPacket& sentpkt) override {
+        sentpkt.delivered = delivered;
+        if (!RTprop.IsInfinite()) {
+            nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+        }
+    }
+
+    void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) override {
+        SPDLOG_TRACE("ackevent:{}, lossevent:{}", ackEvent.DebugInfo(), lossEvent.DebugInfo());
+        if (lossEvent.valid) {
+            // OnDataLoss(lossEvent);
+        }
+        if (ackEvent.valid) {
+            OnDataRecv(ackEvent, rttstats);
+        }
+    }
+
+    uint32_t GetCWND() override {
+        DataNumber bdp = 10;
+        if (!RTprop.IsInfinite()) {
+            bdp = std::max(DataNumber(RTprop.ToMilliseconds() * btlBw), bdp);
+        }
+        if (cwnd_gain > 1) {
+            bdp = std::max(DataNumber(cwnd_gain * bdp), bdp + 1);
+        }
+        SPDLOG_DEBUG("cwnd_gain: {}, bdp: {}", cwnd_gain, bdp);
+        return bdp;
+    }
+
+private:
+    void OnDataRecv(const AckEvent& ackEvent, RttStats& rttstats) {
+        RTprop = std::min(rttstats.latest_rtt(), RTprop);
+        delivered++;
+        double deliveryRate = double(delivered - ackEvent.ackPacket.delivered) / rttstats.latest_rtt().ToMilliseconds();
+        btlBw = std::max(deliveryRate, btlBw);
+
+        if (Clock::GetClock()->Now() > nextPeriodTime) {
+            period_cnt = (period_cnt + 1) % period;
+            switch (period_cnt) {
+            case 1:
+                cwnd_gain = peak_gain;
+                break;
+            case 2:
+                cwnd_gain = 1 + (1 - peak_gain);
+                break;
+            default:
+                cwnd_gain = 1;
+                break;
+            }
+        }
+        SPDLOG_DEBUG("delivered: {}, pkt_delivered: {}", delivered, ackEvent.ackPacket.delivered);
+        SPDLOG_DEBUG("deliveryRate: {}, period: {}, period_cnt: {}", deliveryRate, period, period_cnt);
+        SPDLOG_DEBUG("RTprop: {}, btlBw: {}", RTprop.ToDebuggingValue(), btlBw);
+        SPDLOG_DEBUG("cwnd_gain: {}, bdp: {}",
+            cwnd_gain, DataNumber(RTprop.ToMilliseconds() * btlBw)
+        );
+    }
+
+    Duration RTprop;
+    DataNumber delivered;
+    double btlBw;
+    double cwnd_gain;
+
+    uint32_t period;
+    uint32_t period_cnt;
+    double peak_gain;
+    Timepoint nextPeriodTime;
 };

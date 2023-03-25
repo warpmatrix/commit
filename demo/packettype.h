@@ -10,8 +10,8 @@ using DataNumber = int32_t;
 
 struct DataPacket
 {
-    SeqNumber seq{ MAX_SEQNUMBER };
-    DataNumber pieceId{ MAX_DATANUMBER };
+    SeqNumber seq{ 0 };
+    DataNumber pieceId{ -1 };
 
     virtual ~DataPacket() = default;
 };
@@ -19,6 +19,8 @@ struct DataPacket
 struct InflightPacket : DataPacket
 {
     Timepoint sendtic{ Timepoint::Zero() };
+
+    DataNumber delivered;
 
     friend std::ostream& operator<<(std::ostream& os, const InflightPacket& pkt)
     {
@@ -45,7 +47,7 @@ struct AckedPacket : InflightPacket
     friend std::ostream& operator<<(std::ostream& os, const AckedPacket& pkt)
     {
         os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId <<
-           " sendtic: " << pkt.sendtic << "recvtic: " << " }";
+           " sendtic: " << pkt.sendtic << " recvtic: " << " }";
         return os;
     }
 
@@ -64,13 +66,9 @@ struct AckedPacket : InflightPacket
 class InFlightPacketMap
 {
 public:
-    void AddSentPacket(DataPacket& p, QuicTime sendtic)
+    void AddSentPacket(InflightPacket& p, QuicTime sendtic)
     {
-        InflightPacket inflightPacket;
-        inflightPacket.seq = p.seq;
-        inflightPacket.pieceId = p.pieceId;
-        inflightPacket.sendtic = sendtic;
-        auto&& itor_pair = inflightPktMap.emplace(std::make_pair(p.seq, p.pieceId), inflightPacket);
+        auto&& itor_pair = inflightPktMap.emplace(std::make_pair(p.seq, p.pieceId), p);
         if (!itor_pair.second)
         {
             SPDLOG_WARN("insert failed with seq = {},duplicate pkt?", p.seq);
@@ -79,7 +77,7 @@ public:
         {
             if (p.seq > maxSeqInflightPkt.seq)
             {
-                maxSeqInflightPkt = inflightPacket;
+                maxSeqInflightPkt = p;
             }
             SPDLOG_DEBUG("Add pkt with seq = {}, max inflight {}, max acked {}", p.seq,
                     MaxSeqInflightPkt().DebugInfo(), MaxSeqAckedPkt().DebugInfo());

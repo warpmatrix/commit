@@ -305,37 +305,26 @@ private:
             auto& sessStream = rtt_sess.second;
             auto&& sessId = sessStream->GetSessionId();
             auto&& itor_id_ssQ = m_session_needdownloadpieceQ.find(sessId);
-            if (itor_id_ssQ != m_session_needdownloadpieceQ.end())
-            {
-                auto&& id_sendcnt = toSendinEachSession.find(sessId);
-                if (id_sendcnt != toSendinEachSession.end())
-                {
-                    auto uni32DataReqCnt = toSendinEachSession.at(sessId);
-                    for (auto&& itr = m_downloadQueue.begin();
-                         itr != m_downloadQueue.end() && uni32DataReqCnt > 0;)
-                    {
-
-                        vecToSendpieceNums.push_back(*itr);
-                        m_downloadQueue.erase(itr++);
-                        --uni32DataReqCnt;
-
-                    }
-
-                    m_session_needdownloadpieceQ[sessId].insert(vecToSendpieceNums.begin(),
-                            vecToSendpieceNums.end());
-                    vecToSendpieceNums.clear();
-                }
-                else
-                {
-                    SPDLOG_ERROR("Can't found session {} in toSendinEachSession", sessId.ToLogStr());
-                }
-
-
-            }
-            else
-            {
+            if (itor_id_ssQ == m_session_needdownloadpieceQ.end()) {
                 SPDLOG_ERROR("Can't found Session:{} in session_needdownloadsubpiece", sessId.ToLogStr());
+                continue;
             }
+            auto&& id_sendcnt = toSendinEachSession.find(sessId);
+            if (id_sendcnt == toSendinEachSession.end()) {
+                SPDLOG_ERROR("Can't found session {} in toSendinEachSession", sessId.ToLogStr());
+                continue;
+            }
+            auto uni32DataReqCnt = toSendinEachSession.at(sessId);
+            for (auto&& itr = m_downloadQueue.begin();
+                itr != m_downloadQueue.end() && uni32DataReqCnt > 0;) {
+                vecToSendpieceNums.push_back(*itr);
+                m_downloadQueue.erase(itr++);
+                --uni32DataReqCnt;
+            }
+            m_session_needdownloadpieceQ[sessId].insert(
+                vecToSendpieceNums.begin(), vecToSendpieceNums.end()
+            );
+            vecToSendpieceNums.clear();
         }
 
         // then send in each session
