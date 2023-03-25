@@ -58,14 +58,7 @@ int main(int argc, char** argv)
     myTransportCtlConfig->minWnd = 1;
     // myTransportCtlConfig->maxWnd = 64; // 850~900
     // myTransportCtlConfig->maxWnd = 64 + 16; // inc, 930
-    // myTransportCtlConfig->maxWnd = 64 + 32; // dec, 600~750
-    // myTransportCtlConfig->maxWnd = 32 + 16; // dec, 600~650
-    // myTransportCtlConfig->maxWnd = 32; // dec, 400~450, no queue loss
-    // myTransportCtlConfig->maxWnd = 128; // dec, 600~700
-    // myTransportCtlConfig->maxWnd = 64 + 32; // dec, 650~780
     myTransportCtlConfig->maxWnd = 256; // 900~920
-    // myTransportCtlConfig->maxWnd = 512; // sharply dec
-    // myTransportCtlConfig->maxWnd = 1024; // sharply dec
 
     // Create your TransportCtlFactory
     std::shared_ptr<DemoTransportCtlFactory> myTransportFactory = std::make_shared<DemoTransportCtlFactory>();
