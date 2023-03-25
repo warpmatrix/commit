@@ -150,6 +150,16 @@ public:
             }
         }
 
+        // data request is less than CanSend
+        if (m_downloadQueue.size() < uni32DataReqCnt)
+        {
+            session->SetCtlWait(true);
+        }
+        else
+        {
+            session->SetCtlWait(false);
+        }
+
         /// Add task to session task queue
         std::vector<int32_t> vecSubpieceNums;
         // eject uni32DataReqCnt number of subpieces from

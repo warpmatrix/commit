@@ -21,10 +21,15 @@ struct InflightPacket : DataPacket
     Timepoint sendtic{ Timepoint::Zero() };
 
     DataNumber delivered;
+    DataNumber receivedSeq;
+
+    bool needWait;
+
+    int groupId;
 
     friend std::ostream& operator<<(std::ostream& os, const InflightPacket& pkt)
     {
-        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " }";
+        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " needWait: " << pkt.needWait << " groupId: " << pkt.groupId << " }";
         return os;
     }
 
@@ -47,7 +52,7 @@ struct AckedPacket : InflightPacket
     friend std::ostream& operator<<(std::ostream& os, const AckedPacket& pkt)
     {
         os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId <<
-           " sendtic: " << pkt.sendtic << " recvtic: " << " }";
+           " sendtic: " << pkt.sendtic << " recvtic: " << pkt.recvtic << " }";
         return os;
     }
 
@@ -166,6 +171,19 @@ public:
         }
         SPDLOG_TRACE("seq:{}", seq);
         return rt;
+    }
+
+    bool HasSameGroupPkt(int groupId) 
+    {
+        int num = 0;
+        for (const auto& itor: inflightPktMap)
+        {
+            if (itor.second.groupId == groupId) 
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     std::string DebugInfo() const

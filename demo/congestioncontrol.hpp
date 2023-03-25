@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <chrono>
+#include <cmath>
 #include "basefw/base/log.h"
 #include "utils/thirdparty/quiche/rtt_stats.h"
 #include "utils/rttstats.h"
@@ -13,6 +14,7 @@
 #include "sessionstreamcontroller.hpp"
 #include "packettype.h"
 #include "demo/utils/thirdparty/quiche/quic_time.h"
+
 
 enum class CongestionCtlType : uint8_t {
     none = 0,
@@ -49,6 +51,8 @@ struct AckEvent
     bool valid{ false };
     InflightPacket ackPacket;
     Timepoint sendtic{ Timepoint::Infinite() };
+
+    bool isLastInGroup{ false };
 
     std::string DebugInfo() const
     {
@@ -139,6 +143,8 @@ public:
     virtual void OnDataSent(InflightPacket& sentpkt) = 0;
 
     virtual void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) = 0;
+
+    virtual void SetWait(bool sig) = 0;
 
     /////
     virtual uint32_t GetCWND() = 0;
@@ -360,19 +366,29 @@ public:
         peak_gain = ccConfig.peak_gain;
 
         delivered = 0;
-        cwnd_gain = 1.0;
+        receivedSeq = 0;
+        cwnd_gain = 2.0/std::log(2);
         period_cnt = 0;
+        isStartUp = true;
+        isDrain = false;
+        isWait = false;
+        last_delivered = 0;
+        inflight = 0;
     }
 
     CongestionCtlType GetCCtype() override {
         return CongestionCtlType::bbr;
     }
 
+    void SetWait(bool sig) override {
+        isWait = sig;
+    }
+
     void OnDataSent(InflightPacket& sentpkt) override {
         sentpkt.delivered = delivered;
-        if (!RTprop.IsInfinite()) {
-            nextPeriodTime = Clock::GetClock()->Now() + RTprop;
-        }
+        sentpkt.receivedSeq = receivedSeq;
+        sentpkt.needWait = isWait;
+        inflight++;
     }
 
     void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) override {
@@ -386,50 +402,94 @@ public:
     }
 
     uint32_t GetCWND() override {
+        double detectBw = cwnd_gain * btlBw;
         DataNumber bdp = 10;
         if (!RTprop.IsInfinite()) {
-            bdp = std::max(DataNumber(RTprop.ToMilliseconds() * btlBw), bdp);
+            bdp = std::max(DataNumber(RTprop.ToMilliseconds() * detectBw), 1);
         }
-        if (cwnd_gain > 1) {
-            bdp = std::max(DataNumber(cwnd_gain * bdp), bdp + 1);
-        }
-        SPDLOG_DEBUG("cwnd_gain: {}, bdp: {}", cwnd_gain, bdp);
+        SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, bdp: {}", btlBw, cwnd_gain, bdp);
+
         return bdp;
     }
 
 private:
     void OnDataRecv(const AckEvent& ackEvent, RttStats& rttstats) {
         RTprop = std::min(rttstats.latest_rtt(), RTprop);
+        receivedSeq = ackEvent.ackPacket.seq;
         delivered++;
-        double deliveryRate = double(delivered - ackEvent.ackPacket.delivered) / rttstats.latest_rtt().ToMilliseconds();
-        btlBw = std::max(deliveryRate, btlBw);
+        inflight--;
+        last_delivered = ackEvent.ackPacket.delivered;
+        int dataDelivered = delivered - last_delivered;
+        // if (!ackEvent.isLastInGroup) {
+        //     // a batch of packets received
+        //     SPDLOG_DEBUG("A batch received. Don't change anything");
+        //     return;
+        // }
+        
+        
+        double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();
+        
+        double oldBw = btlBw;
+        if (ackEvent.ackPacket.needWait){
+            // If wait, do not change the state or decrease btlBw
+            btlBw = std::max(deliveryRate, btlBw);
+            cwnd_gain = 1;
+            SPDLOG_DEBUG("Stop for waiting now. deliveryRate: {}, bltBw: {}.", deliveryRate, btlBw);
+            return;
+        }
+        btlBw = deliveryRate;
+        
+        if (isDrain && inflight <= oldBw * RTprop.ToMilliseconds()) {
+            isDrain = false;
+            SPDLOG_DEBUG("Drain over.");
+        }
 
-        if (Clock::GetClock()->Now() > nextPeriodTime) {
-            period_cnt = (period_cnt + 1) % period;
-            switch (period_cnt) {
-            case 1:
-                cwnd_gain = peak_gain;
-                break;
-            case 2:
-                cwnd_gain = 1 + (1 - peak_gain);
-                break;
-            default:
-                cwnd_gain = 1;
-                break;
+        if (Clock::GetClock()->Now() >= nextPeriodTime) {
+            //SPDLOG_DEBUG("Try change cwnd.");
+            if (!RTprop.IsInfinite()) {
+                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+            }
+            if (isStartUp) {
+                cwnd_gain = 2.0/std::log(2);
+                if (deliveryRate - oldBw < -1.0/RTprop.ToMilliseconds() && isStartUp) {
+                    isStartUp = false;
+                    isDrain = true;
+                    cwnd_gain = 1;
+                    SPDLOG_DEBUG("Start up over, now begin to drain.");
+                }
+            }
+            else if (isDrain)
+                cwnd_gain = 0;
+            else {
+                period_cnt = (period_cnt + 1) % period;
+                switch (period_cnt) {
+                case 1:
+                    cwnd_gain = 1 + peak_gain;
+                    break;
+                case 2:
+                    cwnd_gain = 1 - peak_gain;
+                    break;
+                default:
+                    cwnd_gain = 1;
+                    break;
+                } 
             }
         }
         SPDLOG_DEBUG("delivered: {}, pkt_delivered: {}", delivered, ackEvent.ackPacket.delivered);
-        SPDLOG_DEBUG("deliveryRate: {}, period: {}, period_cnt: {}", deliveryRate, period, period_cnt);
-        SPDLOG_DEBUG("RTprop: {}, btlBw: {}", RTprop.ToDebuggingValue(), btlBw);
-        SPDLOG_DEBUG("cwnd_gain: {}, bdp: {}",
-            cwnd_gain, DataNumber(RTprop.ToMilliseconds() * btlBw)
-        );
+        SPDLOG_DEBUG("period_cnt: {} deliveryRate: {}, cwnd_gain: {}", period_cnt, deliveryRate, cwnd_gain);
+        SPDLOG_DEBUG("RTprop: {}, btlBw: {}, oldBw: {}", RTprop.ToDebuggingValue(), btlBw, oldBw);
     }
 
     Duration RTprop;
     DataNumber delivered;
+    DataNumber receivedSeq;
     double btlBw;
     double cwnd_gain;
+    int last_delivered;
+    bool isStartUp;
+    bool isDrain;
+    bool isWait;
+    int inflight;
 
     uint32_t period;
     uint32_t period_cnt;
