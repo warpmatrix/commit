@@ -146,6 +146,8 @@ public:
 
     virtual void SetWait(bool sig) = 0;
 
+    virtual uint32_t GetBatchSize() = 0;
+
     /////
     virtual uint32_t GetCWND() = 0;
 
@@ -367,7 +369,7 @@ public:
 
         delivered = 0;
         receivedSeq = 0;
-        cwnd_gain = 2.0/std::log(2);
+        cwnd_gain = 2.0;
         period_cnt = 0;
         isStartUp = true;
         isDrain = false;
@@ -394,11 +396,22 @@ public:
     void OnDataAckOrLoss(const AckEvent& ackEvent, const LossEvent& lossEvent, RttStats& rttstats) override {
         SPDLOG_TRACE("ackevent:{}, lossevent:{}", ackEvent.DebugInfo(), lossEvent.DebugInfo());
         if (lossEvent.valid) {
-            // OnDataLoss(lossEvent);
+            OnDataLoss(lossEvent);
         }
         if (ackEvent.valid) {
             OnDataRecv(ackEvent, rttstats);
         }
+    }
+
+    uint32_t GetBatchSize() override {
+        double detectBw = cwnd_gain * btlBw;
+        DataNumber bdp = 10;
+        if (!RTprop.IsInfinite()) {
+            bdp = std::max(DataNumber(2 * intervalSetting * detectBw), 1);
+        }
+        SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, batch size: {}", btlBw, cwnd_gain, bdp);
+
+        return bdp;
     }
 
     uint32_t GetCWND() override {
@@ -420,64 +433,58 @@ private:
         inflight--;
         last_delivered = ackEvent.ackPacket.delivered;
         int dataDelivered = delivered - last_delivered;
-        // if (!ackEvent.isLastInGroup) {
-        //     // a batch of packets received
-        //     SPDLOG_DEBUG("A batch received. Don't change anything");
-        //     return;
-        // }
-        
-        
-        double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();
-        
+    
+        double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();       
         double oldBw = btlBw;
-        if (ackEvent.ackPacket.needWait){
-            // If wait, do not change the state or decrease btlBw
-            btlBw = std::max(deliveryRate, btlBw);
-            cwnd_gain = 1;
-            SPDLOG_DEBUG("Stop for waiting now. deliveryRate: {}, bltBw: {}.", deliveryRate, btlBw);
-            return;
-        }
-        btlBw = deliveryRate;
+        btlBw = std::max(deliveryRate, btlBw);
         
-        if (isDrain && inflight <= oldBw * RTprop.ToMilliseconds()) {
-            isDrain = false;
-            SPDLOG_DEBUG("Drain over.");
+        if (isStartUp){
+            cwnd_gain = 2.0;
+        } else {
+            cwnd_gain = 1.25;
         }
 
         if (Clock::GetClock()->Now() >= nextPeriodTime) {
             //SPDLOG_DEBUG("Try change cwnd.");
             if (!RTprop.IsInfinite()) {
-                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+                nextPeriodTime = Clock::GetClock()->Now() + rttstats.smoothed_rtt();
             }
-            if (isStartUp) {
-                cwnd_gain = 2.0/std::log(2);
-                if (deliveryRate - oldBw < -1.0/RTprop.ToMilliseconds() && isStartUp) {
+            if (isStartUp && oldBw >= deliveryRate) {
+                period_cnt++;
+                if (period_cnt == period) {
                     isStartUp = false;
-                    isDrain = true;
-                    cwnd_gain = 1;
-                    SPDLOG_DEBUG("Start up over, now begin to drain.");
+                    period_cnt = 0;
+                    SPDLOG_DEBUG("start up over");
                 }
+            } else if (!isStartUp && oldBw < deliveryRate) {
+                period_cnt++;
+                if (period_cnt == period) {
+                    isStartUp = true;
+                    period_cnt = 0;
+                    SPDLOG_DEBUG("start up retry");
+                }
+            } else {
+                period_cnt = 0;
+                SPDLOG_DEBUG("keep steady");
             }
-            else if (isDrain)
-                cwnd_gain = 0;
-            else {
-                period_cnt = (period_cnt + 1) % period;
-                switch (period_cnt) {
-                case 1:
-                    cwnd_gain = 1 + peak_gain;
-                    break;
-                case 2:
-                    cwnd_gain = 1 - peak_gain;
-                    break;
-                default:
-                    cwnd_gain = 1;
-                    break;
-                } 
-            }
-        }
+        } 
+            
         SPDLOG_DEBUG("delivered: {}, pkt_delivered: {}", delivered, ackEvent.ackPacket.delivered);
         SPDLOG_DEBUG("period_cnt: {} deliveryRate: {}, cwnd_gain: {}", period_cnt, deliveryRate, cwnd_gain);
         SPDLOG_DEBUG("RTprop: {}, btlBw: {}, oldBw: {}", RTprop.ToDebuggingValue(), btlBw, oldBw);
+    }
+
+    void OnDataLoss(const LossEvent& lossEvent)
+    {
+        SPDLOG_DEBUG("lossevent: {}", lossEvent.DebugInfo());
+        Timepoint maxsentTic{ Timepoint::Zero() };
+
+        if (lossEvent.lossPackets.size() > 3) {
+            btlBw = 0.5*btlBw;
+        } else {
+            btlBw = 0.9*btlBw;
+        }
+
     }
 
     Duration RTprop;
@@ -490,6 +497,7 @@ private:
     bool isDrain;
     bool isWait;
     int inflight;
+    uint32_t intervalSetting{ 20 };
 
     uint32_t period;
     uint32_t period_cnt;

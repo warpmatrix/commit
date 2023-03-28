@@ -143,7 +143,8 @@ public:
         {
             return false;
         }
-        return m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
+        auto maxSend = m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
+        return std::min(maxSend, m_congestionCtl->GetBatchSize());
     };
 
     /// send ONE datarequest Pkt, requestting for the data pieces whose id are in spns
