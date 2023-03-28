@@ -82,7 +82,7 @@ struct TransportModuleSettings
     * */
     virtual uint32_t GetAlarmInterval()
     {
-        return 100U;
+        return 20U;
     };
 
     virtual ~TransportModuleSettings() = default;
