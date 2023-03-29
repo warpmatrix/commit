@@ -125,6 +125,17 @@ public:
         
     }
 
+    void SetLastSentTime(Timepoint time, int pktNum) 
+    {
+        lastSentTime = time;
+        Duration unit = m_congestionCtl->GetUnitTime();
+        waitTime = unit * pktNum;
+    }
+
+    DataNumber GetCWND() {
+        return m_congestionCtl->GetCWND();
+    }
+
     bool CanSend()
     {
         SPDLOG_TRACE("");
@@ -144,6 +155,10 @@ public:
             return false;
         }
         auto maxSend = m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
+
+        // if (Clock::GetClock()->Now() >= lastSentTime + waitTime) 
+        //     return std::min(maxSend, m_congestionCtl->GetBatchSize());
+        // else return 0;
         return std::min(maxSend, m_congestionCtl->GetBatchSize());
     };
 
@@ -169,6 +184,7 @@ public:
         auto handler = m_ssStreamHandler.lock();
         if (handler)
         {
+            SetLastSentTime(Clock::GetClock()->Now(), spns.size());
             return handler->DoSendDataRequest(peerid, spns);
         }
         else
@@ -331,6 +347,9 @@ private:
     std::unique_ptr<LossDetectionAlgo> m_lossDetect;
     std::weak_ptr<SessionStreamCtlHandler> m_ssStreamHandler;
     InFlightPacketMap m_inflightpktmap;
+
+    Timepoint lastSentTime{ Timepoint::Zero() };;
+    Duration waitTime{ Duration::FromMilliseconds(0) };
 
     std::unique_ptr<PacketSender> m_sendCtl;
     RttStats m_rttstats;

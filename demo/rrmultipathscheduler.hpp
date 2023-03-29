@@ -150,13 +150,10 @@ public:
             }
         }
 
-        // data request is less than CanSend
         if (m_downloadQueue.size() < uni32DataReqCnt)
         {
             session->SetCtlWait(true);
-        }
-        else
-        {
+        } else {
             session->SetCtlWait(false);
         }
 
@@ -199,15 +196,15 @@ public:
         DoSinglePathSchedule(sessionid);
     }
 
-    void SortSession(std::multimap<Duration, fw::shared_ptr<SessionStreamController>>& sortmmap) override
+    void SortSession(std::multimap<DataNumber, fw::shared_ptr<SessionStreamController>>& sortmmap) override
     {
         SPDLOG_TRACE("");
         sortmmap.clear();
         for (auto&& sessionItor: m_dlsessionmap)
         {
-            auto score = sessionItor.second->GetRtt();
+            auto score = sessionItor.second->GetCWND();
             SPDLOG_DEBUG("[custom] sort: {}, {}",
-                sessionItor.first.ToLogStr(), score.ToDebuggingValue());
+                sessionItor.first.ToLogStr(), score);//score.ToDebuggingValue());
             sortmmap.emplace(score, sessionItor.second);
         }
 
@@ -352,7 +349,7 @@ private:
 
     /// It's multipath scheduler's duty to maintain session_needdownloadsubpiece, and m_sortmmap
     std::map<fw::ID, std::set<DataNumber>> m_session_needdownloadpieceQ;// session task queues
-    std::multimap<Duration, fw::shared_ptr<SessionStreamController>> m_sortmmap;
+    std::multimap<DataNumber, fw::shared_ptr<SessionStreamController>> m_sortmmap;
     fw::weak_ptr<MultiPathSchedulerHandler> m_phandler;
 
 };

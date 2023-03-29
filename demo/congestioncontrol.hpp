@@ -148,6 +148,8 @@ public:
 
     virtual uint32_t GetBatchSize() = 0;
 
+    virtual Duration GetUnitTime() = 0;
+
     /////
     virtual uint32_t GetCWND() = 0;
 
@@ -407,18 +409,25 @@ public:
         double detectBw = cwnd_gain * btlBw;
         DataNumber bdp = 10;
         if (!RTprop.IsInfinite()) {
-            bdp = std::max(DataNumber(2 * intervalSetting * detectBw), 1);
+            bdp = std::max(DataNumber(intervalSetting * detectBw), 1);
         }
         SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, batch size: {}", btlBw, cwnd_gain, bdp);
 
         return bdp;
     }
 
+    Duration GetUnitTime() override {
+        double detectBw = std::max(cwnd_gain, double(1)) * btlBw;
+        Duration unitTime = Duration::FromMicroseconds(int (1000 / detectBw));
+        SPDLOG_DEBUG("detectBw: {}, unit time: {}", detectBw, unitTime.ToMicroseconds());
+        return unitTime;
+    }
+
     uint32_t GetCWND() override {
         double detectBw = cwnd_gain * btlBw;
         DataNumber bdp = 10;
         if (!RTprop.IsInfinite()) {
-            bdp = std::max(DataNumber(RTprop.ToMilliseconds() * detectBw), 1);
+            bdp = std::max(std::min(DataNumber(RTprop.ToMilliseconds() * detectBw), DataNumber(RTprop.ToMilliseconds() * btlBw)+20), 1);
         }
         SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, bdp: {}", btlBw, cwnd_gain, bdp);
 
@@ -434,38 +443,48 @@ private:
         last_delivered = ackEvent.ackPacket.delivered;
         int dataDelivered = delivered - last_delivered;
     
-        double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();       
+        double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();      
+        //double maxdeliveryRate =  double(dataDelivered) / RTprop.ToMilliseconds();   
         double oldBw = btlBw;
         btlBw = std::max(deliveryRate, btlBw);
+        //if (oldBw != btlBw) lastBwTime = Clock::GetClock()->Now();
         
-        if (isStartUp){
-            cwnd_gain = 2.0;
-        } else {
-            cwnd_gain = 1.25;
-        }
+        
 
-        if (Clock::GetClock()->Now() >= nextPeriodTime) {
+        if (Clock::GetClock()->Now() >= nextPeriodTime && !ackEvent.ackPacket.needWait) {
             //SPDLOG_DEBUG("Try change cwnd.");
             if (!RTprop.IsInfinite()) {
-                nextPeriodTime = Clock::GetClock()->Now() + rttstats.smoothed_rtt();
+                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
             }
+            if (isStartUp){
+                cwnd_gain = 2.0;
+            } 
             if (isStartUp && oldBw >= deliveryRate) {
                 period_cnt++;
+                //steady_period = 0;
+                cwnd_gain = 1.25;
                 if (period_cnt == period) {
                     isStartUp = false;
                     period_cnt = 0;
+                    cwnd_gain = 0.75;
                     SPDLOG_DEBUG("start up over");
                 }
             } else if (!isStartUp && oldBw < deliveryRate) {
-                period_cnt++;
-                if (period_cnt == period) {
-                    isStartUp = true;
-                    period_cnt = 0;
-                    SPDLOG_DEBUG("start up retry");
-                }
+                //period_cnt++;
+                cwnd_gain = 1.25;
+                // if (period_cnt == 2*period) {
+                //     isStartUp = true;
+                //     period_cnt = 0;
+                //     cwnd_gain = 2.0;
+                //     SPDLOG_DEBUG("start up retry");
+                // }
+            } else if (!isStartUp){
+                //steady_period = (steady_period + 1) % period;
+                period_cnt = 0;
+                cwnd_gain = 1.25;
+                SPDLOG_DEBUG("keep steady");
             } else {
                 period_cnt = 0;
-                SPDLOG_DEBUG("keep steady");
             }
         } 
             
@@ -478,16 +497,21 @@ private:
     {
         SPDLOG_DEBUG("lossevent: {}", lossEvent.DebugInfo());
         Timepoint maxsentTic{ Timepoint::Zero() };
+        inflight--;
 
         if (lossEvent.lossPackets.size() > 3) {
             btlBw = 0.5*btlBw;
+            if (!RTprop.IsInfinite()) {
+                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+            }
         } else {
             btlBw = 0.9*btlBw;
+            cwnd_gain = 1.25;
         }
-
     }
 
     Duration RTprop;
+    Timepoint lastBwTime { Clock::GetClock()->Now() };
     DataNumber delivered;
     DataNumber receivedSeq;
     double btlBw;
@@ -500,7 +524,8 @@ private:
     uint32_t intervalSetting{ 20 };
 
     uint32_t period;
-    uint32_t period_cnt;
+    uint32_t period_cnt{ 0 };
+    //uint32_t steady_period{ 0 };
     double peak_gain;
     Timepoint nextPeriodTime;
 };

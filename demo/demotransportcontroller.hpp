@@ -17,7 +17,7 @@ public:
 
     ~DemoTransportCtlConfig() override = default;
 
-    uint32_t period{ 4 };
+    uint32_t period{ 3 };
     double peak_gain{ 0.25 };
 
     uint32_t maxWnd{ 64 };
