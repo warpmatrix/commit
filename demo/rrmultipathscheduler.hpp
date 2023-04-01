@@ -150,13 +150,6 @@ public:
             }
         }
 
-        if (m_downloadQueue.size() < uni32DataReqCnt)
-        {
-            session->SetCtlWait(true);
-        } else {
-            session->SetCtlWait(false);
-        }
-
         /// Add task to session task queue
         std::vector<int32_t> vecSubpieceNums;
         // eject uni32DataReqCnt number of subpieces from
@@ -196,15 +189,13 @@ public:
         DoSinglePathSchedule(sessionid);
     }
 
-    void SortSession(std::multimap<DataNumber, fw::shared_ptr<SessionStreamController>>& sortmmap) override
+    void SortSession(std::multimap<Duration, fw::shared_ptr<SessionStreamController>>& sortmmap) override
     {
         SPDLOG_TRACE("");
         sortmmap.clear();
         for (auto&& sessionItor: m_dlsessionmap)
         {
-            auto score = sessionItor.second->GetCWND();
-            SPDLOG_DEBUG("[custom] sort: {}, {}",
-                sessionItor.first.ToLogStr(), score);//score.ToDebuggingValue());
+            auto score = sessionItor.second->GetRtt();
             sortmmap.emplace(score, sessionItor.second);
         }
 
@@ -312,26 +303,37 @@ private:
             auto& sessStream = rtt_sess.second;
             auto&& sessId = sessStream->GetSessionId();
             auto&& itor_id_ssQ = m_session_needdownloadpieceQ.find(sessId);
-            if (itor_id_ssQ == m_session_needdownloadpieceQ.end()) {
+            if (itor_id_ssQ != m_session_needdownloadpieceQ.end())
+            {
+                auto&& id_sendcnt = toSendinEachSession.find(sessId);
+                if (id_sendcnt != toSendinEachSession.end())
+                {
+                    auto uni32DataReqCnt = toSendinEachSession.at(sessId);
+                    for (auto&& itr = m_downloadQueue.begin();
+                         itr != m_downloadQueue.end() && uni32DataReqCnt > 0;)
+                    {
+
+                        vecToSendpieceNums.push_back(*itr);
+                        m_downloadQueue.erase(itr++);
+                        --uni32DataReqCnt;
+
+                    }
+
+                    m_session_needdownloadpieceQ[sessId].insert(vecToSendpieceNums.begin(),
+                            vecToSendpieceNums.end());
+                    vecToSendpieceNums.clear();
+                }
+                else
+                {
+                    SPDLOG_ERROR("Can't found session {} in toSendinEachSession", sessId.ToLogStr());
+                }
+
+
+            }
+            else
+            {
                 SPDLOG_ERROR("Can't found Session:{} in session_needdownloadsubpiece", sessId.ToLogStr());
-                continue;
             }
-            auto&& id_sendcnt = toSendinEachSession.find(sessId);
-            if (id_sendcnt == toSendinEachSession.end()) {
-                SPDLOG_ERROR("Can't found session {} in toSendinEachSession", sessId.ToLogStr());
-                continue;
-            }
-            auto uni32DataReqCnt = toSendinEachSession.at(sessId);
-            for (auto&& itr = m_downloadQueue.begin();
-                itr != m_downloadQueue.end() && uni32DataReqCnt > 0;) {
-                vecToSendpieceNums.push_back(*itr);
-                m_downloadQueue.erase(itr++);
-                --uni32DataReqCnt;
-            }
-            m_session_needdownloadpieceQ[sessId].insert(
-                vecToSendpieceNums.begin(), vecToSendpieceNums.end()
-            );
-            vecToSendpieceNums.clear();
         }
 
         // then send in each session
@@ -349,7 +351,7 @@ private:
 
     /// It's multipath scheduler's duty to maintain session_needdownloadsubpiece, and m_sortmmap
     std::map<fw::ID, std::set<DataNumber>> m_session_needdownloadpieceQ;// session task queues
-    std::multimap<DataNumber, fw::shared_ptr<SessionStreamController>> m_sortmmap;
+    std::multimap<Duration, fw::shared_ptr<SessionStreamController>> m_sortmmap;
     fw::weak_ptr<MultiPathSchedulerHandler> m_phandler;
 
 };

@@ -17,12 +17,11 @@ public:
 
     ~DemoTransportCtlConfig() override = default;
 
-    uint32_t period{ 3 };
+    // uint32_t maxWnd{ 128 };
+    // uint32_t minWnd{ 1 };
+    // uint32_t slowStartThreshold{ 32 };
+    uint32_t period{ 4 };
     double peak_gain{ 0.25 };
-
-    uint32_t maxWnd{ 64 };
-    uint32_t minWnd{ 1 };
-    uint32_t slowStartThreshold{ 32 };
 
     std::string DebugInfo();
 };
@@ -129,10 +128,8 @@ private:
     std::weak_ptr<MPDTransCtlHandler> m_transctlHandler; // transport module call back
     std::set<DataNumber> m_downloadPieces;/// main task download queue
     std::set<DataNumber> m_lostPiecesl;/// lost packets will be stored here till retransmission
+    OursCongestionCtlConfig oursccConfig;/// congestion config file
     std::map<basefw::ID, std::shared_ptr<SessionStreamController>> m_sessStreamCtlMap;/// map session id to sessionstream
-
-    BBRCongestionCtlConfig bbrccConfig;
-    RenoCongestionCtlConfig renoccConfig;/// congestion config file
 };
 
 /** @class A demo TransportController used to create DemoTransportCtl

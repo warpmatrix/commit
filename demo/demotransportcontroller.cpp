@@ -10,9 +10,10 @@ DemoTransportCtlConfig::DemoTransportCtlConfig() : TransPortControllerConfig()
 std::string DemoTransportCtlConfig::DebugInfo()
 {
     std::stringstream ss;
-    ss << "period: " << period;
-    // ss << "{" << "minWnd:" << minWnd << " maxWnd:" << maxWnd <<
-    //     " slowStartThreshold:" << slowStartThreshold << " }";
+    ss
+            << "{"
+            << "period:" << period << " peak_gain:" << peak_gain
+            << " }";
     return ss.str();
 }
 
@@ -22,12 +23,12 @@ DemoTransportCtl::DemoTransportCtl(std::shared_ptr<TransPortControllerConfig> ct
 {
     //multipathscheduler = std::make_shared(RRMultiPathScheduler());
     m_transCtlConfig = std::dynamic_pointer_cast<DemoTransportCtlConfig>(ctlConfig);
-    bbrccConfig.period = m_transCtlConfig->period;
-    bbrccConfig.peak_gain = m_transCtlConfig->peak_gain;
+    // renoccConfig.minCwnd = m_transCtlConfig->minWnd;
+    // renoccConfig.maxCwnd = m_transCtlConfig->maxWnd;
+    // renoccConfig.ssThresh = m_transCtlConfig->slowStartThreshold;
 
-    renoccConfig.minCwnd = m_transCtlConfig->minWnd;
-    renoccConfig.maxCwnd = m_transCtlConfig->maxWnd;
-    renoccConfig.ssThresh = m_transCtlConfig->slowStartThreshold;
+    oursccConfig.period = m_transCtlConfig->period;
+    oursccConfig.peak_gain = m_transCtlConfig->peak_gain;
 
     SPDLOG_DEBUG("config:{}", m_transCtlConfig->DebugInfo());
 }
@@ -115,7 +116,7 @@ void DemoTransportCtl::OnSessionCreate(const fw::ID& sessionid)
     if (sessionItor == m_sessStreamCtlMap.end())
     {
         m_sessStreamCtlMap[sessionid] = std::make_shared<SessionStreamController>();
-        m_sessStreamCtlMap[sessionid]->StartSessionStreamCtl(sessionid, bbrccConfig, shared_from_this());
+        m_sessStreamCtlMap[sessionid]->StartSessionStreamCtl(sessionid, oursccConfig, shared_from_this());
     }
     else
     {
@@ -175,9 +176,6 @@ void DemoTransportCtl::OnSessionDestory(const fw::ID& sessionid)
  */
 void DemoTransportCtl::OnPieceTaskAdding(std::vector<int32_t>& datapiecesVec)
 {
-    SPDLOG_DEBUG("[custom]: add ({}) piece task: {}",
-        datapiecesVec.size(), datapiecesVec
-    );
     for (auto&& dataPiece: datapiecesVec)
     {
         auto rt = m_downloadPieces.emplace(dataPiece);
@@ -224,7 +222,7 @@ void DemoTransportCtl::OnDownloadTaskReset()
  * */
 void DemoTransportCtl::OnDataPiecesReceived(const fw::ID& sessionid, uint32_t seq, int32_t datapiece, uint64_t tic_us)
 {
-    SPDLOG_TRACE("session = {}, seq ={}, datapiece = {}, tic_us = {}",sessionid.ToLogStr(),seq,datapiece,tic_us);
+    SPDLOG_TRACE("session = {}, seq ={},datapiece = {},tic_us = {}",sessionid.ToLogStr(),seq,datapiece,tic_us);
     Timepoint recvtic = Clock::GetClock()->CreateTimeFromMicroseconds(tic_us);
     // call session control firstly to change cwnd first
     auto&& sessionItor = m_sessStreamCtlMap.find(sessionid);
@@ -345,7 +343,6 @@ bool DemoTransportCtl::OnGetByteRate(uint32_t& playbyterate)
 
 void DemoTransportCtl::OnRequestDownloadPieces(uint32_t maxpiececnt)
 {
-    SPDLOG_DEBUG("[custom] request piece cnt: {}", maxpiececnt);
     if (!isRunning)
     {
         return;

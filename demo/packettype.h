@@ -10,8 +10,8 @@ using DataNumber = int32_t;
 
 struct DataPacket
 {
-    SeqNumber seq{ 0 };
-    DataNumber pieceId{ -1 };
+    SeqNumber seq{ MAX_SEQNUMBER };
+    DataNumber pieceId{ MAX_DATANUMBER };
 
     virtual ~DataPacket() = default;
 };
@@ -20,16 +20,11 @@ struct InflightPacket : DataPacket
 {
     Timepoint sendtic{ Timepoint::Zero() };
 
-    DataNumber delivered;
-    DataNumber receivedSeq;
-
-    bool needWait;
-
-    int groupId;
+    int delivered{ 0 };
 
     friend std::ostream& operator<<(std::ostream& os, const InflightPacket& pkt)
     {
-        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " needWait: " << pkt.needWait << " groupId: " << pkt.groupId << " }";
+        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " }";
         return os;
     }
 
@@ -52,7 +47,7 @@ struct AckedPacket : InflightPacket
     friend std::ostream& operator<<(std::ostream& os, const AckedPacket& pkt)
     {
         os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId <<
-           " sendtic: " << pkt.sendtic << " recvtic: " << pkt.recvtic << " }";
+           " sendtic: " << pkt.sendtic << "recvtic: " << " }";
         return os;
     }
 
@@ -71,9 +66,13 @@ struct AckedPacket : InflightPacket
 class InFlightPacketMap
 {
 public:
-    void AddSentPacket(InflightPacket& p, QuicTime sendtic)
+    void AddSentPacket(DataPacket& p, QuicTime sendtic)
     {
-        auto&& itor_pair = inflightPktMap.emplace(std::make_pair(p.seq, p.pieceId), p);
+        InflightPacket inflightPacket;
+        inflightPacket.seq = p.seq;
+        inflightPacket.pieceId = p.pieceId;
+        inflightPacket.sendtic = sendtic;
+        auto&& itor_pair = inflightPktMap.emplace(std::make_pair(p.seq, p.pieceId), inflightPacket);
         if (!itor_pair.second)
         {
             SPDLOG_WARN("insert failed with seq = {},duplicate pkt?", p.seq);
@@ -82,7 +81,7 @@ public:
         {
             if (p.seq > maxSeqInflightPkt.seq)
             {
-                maxSeqInflightPkt = p;
+                maxSeqInflightPkt = inflightPacket;
             }
             SPDLOG_DEBUG("Add pkt with seq = {}, max inflight {}, max acked {}", p.seq,
                     MaxSeqInflightPkt().DebugInfo(), MaxSeqAckedPkt().DebugInfo());
@@ -171,19 +170,6 @@ public:
         }
         SPDLOG_TRACE("seq:{}", seq);
         return rt;
-    }
-
-    bool HasSameGroupPkt(int groupId) 
-    {
-        int num = 0;
-        for (const auto& itor: inflightPktMap)
-        {
-            if (itor.second.groupId == groupId) 
-            {
-                return true;
-            }
-        }
-        return false;
     }
 
     std::string DebugInfo() const

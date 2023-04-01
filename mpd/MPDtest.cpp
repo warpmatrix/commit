@@ -32,8 +32,7 @@ int main(int argc, char** argv)
     // another logger format
     // combined_logger->set_pattern("[%D %H:%M:%S.%e][%s %!: %#] %v");
     combined_logger->set_level(spdlog::level::trace);
-    // combined_logger->set_level(spdlog::level::debug);
-    combined_logger->flush_on(spdlog::level::debug);
+    combined_logger->flush_on(spdlog::level::trace);
     spdlog::set_default_logger(combined_logger);
 
     ////////////////////parse initiate parameters//////////////////////////////
@@ -55,10 +54,8 @@ int main(int argc, char** argv)
 
     std::shared_ptr<DemoTransportCtlConfig> myTransportCtlConfig = std::make_shared<DemoTransportCtlConfig>();
     // these values will be passed to demo transport module
-    myTransportCtlConfig->minWnd = 1;
-    // myTransportCtlConfig->maxWnd = 64; // 850~900
-    // myTransportCtlConfig->maxWnd = 64 + 16; // inc, 930
-    myTransportCtlConfig->maxWnd = 256; // 900~920
+    // myTransportCtlConfig->minWnd = 1;
+    // myTransportCtlConfig->maxWnd = 128;
 
     // Create your TransportCtlFactory
     std::shared_ptr<DemoTransportCtlFactory> myTransportFactory = std::make_shared<DemoTransportCtlFactory>();
@@ -78,6 +75,8 @@ int main(int argc, char** argv)
     ///step 2:
     PlayMetaConfig myPlayConfig;
     myPlayConfig.filelengthinbyte = 10*1024*1024;
+    myPlayConfig.bitrate = 1*1024*1024;
+    myPlayConfig.byterate = myPlayConfig.bitrate / 8;
     MPD::InitPlayer(myPlayConfig,MPD::SDKLogLevel::DEBUG,myPlayerEventHandler);
 
     ///step 3:
