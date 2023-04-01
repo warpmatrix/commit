@@ -39,12 +39,15 @@ public:
 
     uint32_t MaySendPktCnt(uint32_t cwnd, uint32_t downloadingPktCnt)
     {
-        SPDLOG_TRACE("cwnd: {}, downloadingPktCnt: {}", cwnd, downloadingPktCnt);
-        if (cwnd < downloadingPktCnt) {
-            return 0;
+        SPDLOG_TRACE("cwnd:{},downloadingPktCnt:{}", cwnd, downloadingPktCnt);
+        if (cwnd >= downloadingPktCnt)
+        {
+            return std::min(cwnd - downloadingPktCnt, 8U);
         }
-        return std::min(cwnd - downloadingPktCnt, 8U);
-        // return cwnd - downloadingPktCnt;
+        else
+        {
+            return 0U;
+        }
     }
 
 };
@@ -67,7 +70,7 @@ public:
         StopSessionStreamCtl();
     }
 
-    void StartSessionStreamCtl(const basefw::ID& sessionId, BBRCongestionCtlConfig& ccConfig,
+    void StartSessionStreamCtl(const basefw::ID& sessionId, OursCongestionCtlConfig& ccConfig,
             std::weak_ptr<SessionStreamCtlHandler> ssStreamHandler)
     {
         if (isRunning)
@@ -79,7 +82,7 @@ public:
         m_sessionId = sessionId;
         m_ssStreamHandler = ssStreamHandler;
         // cc
-        m_congestionCtl.reset(new BBRCongestionControl(ccConfig));
+        m_congestionCtl.reset(new OursCongestionControl(ccConfig));
 
         // send control
         m_sendCtl.reset(new PacketSender());
@@ -115,27 +118,6 @@ public:
         }
     }
 
-    void SetCtlWait(bool sig)
-    {
-        m_congestionCtl->SetWait(sig);
-        if (sig)
-            SPDLOG_WARN("Start waiting");
-        else
-            SPDLOG_WARN("Stop waiting");
-        
-    }
-
-    void SetLastSentTime(Timepoint time, int pktNum) 
-    {
-        lastSentTime = time;
-        Duration unit = m_congestionCtl->GetUnitTime();
-        waitTime = unit * pktNum;
-    }
-
-    DataNumber GetCWND() {
-        return m_congestionCtl->GetCWND();
-    }
-
     bool CanSend()
     {
         SPDLOG_TRACE("");
@@ -154,12 +136,7 @@ public:
         {
             return false;
         }
-        auto maxSend = m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
-
-        // if (Clock::GetClock()->Now() >= lastSentTime + waitTime) 
-        //     return std::min(maxSend, m_congestionCtl->GetBatchSize());
-        // else return 0;
-        return std::min(maxSend, m_congestionCtl->GetBatchSize());
+        return m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
     };
 
     /// send ONE datarequest Pkt, requestting for the data pieces whose id are in spns
@@ -184,7 +161,6 @@ public:
         auto handler = m_ssStreamHandler.lock();
         if (handler)
         {
-            SetLastSentTime(Clock::GetClock()->Now(), spns.size());
             return handler->DoSendDataRequest(peerid, spns);
         }
         else
@@ -201,8 +177,6 @@ public:
         SPDLOG_TRACE("seq = {}, dataid = {}, sendtic = {}",
                 seqs,
                 dataids, sendtic.ToDebuggingValue());
-        SPDLOG_DEBUG("[custom] session_id: {}, sendtic: {}, cwnd: {}",
-            GetSessionID().ToLogStr(), sendtic.ToDebuggingValue(), m_congestionCtl->GetCWND());
         if (!isRunning)
         {
             return;
@@ -210,23 +184,21 @@ public:
         auto seqidx = 0;
         for (auto datano: dataids)
         {
+            DataPacket p;
+            p.seq = seqs[seqidx];
+            p.pieceId = datano;
+            // add to downloading queue
+            m_inflightpktmap.AddSentPacket(p, sendtic);
+
             // inform cc algo that a packet is sent
             InflightPacket sentpkt;
             sentpkt.seq = seqs[seqidx];
             sentpkt.pieceId = datano;
             sentpkt.sendtic = sendtic;
-            sentpkt.groupId = nowGroupID;
             m_congestionCtl->OnDataSent(sentpkt);
-
-            // add to downloading queue
-            m_inflightpktmap.AddSentPacket(sentpkt, sendtic);
-
             seqidx++;
         }
-        nowGroupID++;
-        SPDLOG_DEBUG("[custom] inflight: {} send_tic: {} session_id: {} nowGroupID: {}",
-            GetInFlightPktNum(), sendtic.ToDebuggingValue(), GetSessionID().ToLogStr(), nowGroupID
-        );
+
     }
 
     void OnDataPktReceived(uint32_t seq, int32_t datapiece, Timepoint recvtic)
@@ -239,32 +211,35 @@ public:
         auto rtpair = m_inflightpktmap.PktIsInFlight(seq, datapiece);
         auto inFlight = rtpair.first;
         auto inflightPkt = rtpair.second;
-        if (!inFlight) {
-            SPDLOG_WARN("Recv an pkt with unknown seq: {}", seq);
-            return;
+        if (inFlight)
+        {
+
+            auto oldsrtt = m_rttstats.smoothed_rtt();
+            // we don't have ack_delay in this simple implementation.
+            auto pkt_rtt = recvtic - inflightPkt.sendtic;
+            m_rttstats.UpdateRtt(pkt_rtt, Duration::Zero(), Clock::GetClock()->Now());
+            auto newsrtt = m_rttstats.smoothed_rtt();
+
+            auto oldcwnd = m_congestionCtl->GetCWND();
+
+            AckEvent ackEvent;
+            ackEvent.valid = true;
+            ackEvent.ackPacket.seq = seq;
+            ackEvent.ackPacket.pieceId = datapiece;
+            ackEvent.sendtic = inflightPkt.sendtic;
+            ackEvent.recvtic = recvtic;
+            LossEvent lossEvent; // if we detect loss when ACK event, we may do loss check here.
+            m_congestionCtl->OnDataAckOrLoss(ackEvent, lossEvent, m_rttstats);
+
+            auto newcwnd = m_congestionCtl->GetCWND();
+            // mark as received
+            m_inflightpktmap.OnPacktReceived(inflightPkt, recvtic);
+        }
+        else
+        {
+            SPDLOG_WARN(" Recv an pkt with unknown seq:{}", seq);
         }
 
-        bool hasSameGroupPkt = m_inflightpktmap.HasSameGroupPkt(inflightPkt.groupId);
-
-        auto pkt_rtt = recvtic - inflightPkt.sendtic;
-        m_rttstats.UpdateRtt(pkt_rtt, Duration::Zero(), Clock::GetClock()->Now());
-        auto newsrtt = m_rttstats.smoothed_rtt();
-        SPDLOG_DEBUG("[custom] latest_rtt: {}, smooth_rtt: {}, recv_tic: {}, session_id: {}",
-            m_rttstats.latest_rtt().ToDebuggingValue(),
-            m_rttstats.smoothed_rtt().ToDebuggingValue(),
-            recvtic.ToDebuggingValue(),
-            GetSessionID().ToLogStr()
-        );
-
-        AckEvent ackEvent;
-        ackEvent.valid = true;
-        ackEvent.ackPacket = inflightPkt;
-        ackEvent.isLastInGroup = hasSameGroupPkt;
-        LossEvent lossEvent; // if we detect loss when ACK event, we may do loss check here.
-        m_congestionCtl->OnDataAckOrLoss(ackEvent, lossEvent, m_rttstats);
-
-        // mark as received
-        m_inflightpktmap.OnPacktReceived(inflightPkt, recvtic);
     }
 
     void OnLossDetectionAlarm()
@@ -300,10 +275,7 @@ public:
         Timepoint now_t = Clock::GetClock()->Now();
         AckEvent ack;
         LossEvent loss;
-        SPDLOG_TRACE("inflight: {} eventtime: {} session_id:{} ", m_inflightpktmap.DebugInfo(),
-                now_t.ToDebuggingValue(), m_sessionId.ToLogStr());
         m_lossDetect->DetectLoss(m_inflightpktmap, now_t, ack, -1, loss, m_rttstats);
-        SPDLOG_DEBUG("losses: {} session_id: {}", loss.DebugInfo(), m_sessionId.ToLogStr());
         if (loss.valid)
         {
             for (auto&& pkt: loss.lossPackets)
@@ -339,7 +311,6 @@ public:
 
 private:
     bool isRunning{ false };
-    int nowGroupID{ 0 };
 
     basefw::ID m_sessionId;/** The remote peer id defines the session id*/
     basefw::ID m_taskid;/**The file id downloading*/
@@ -347,9 +318,6 @@ private:
     std::unique_ptr<LossDetectionAlgo> m_lossDetect;
     std::weak_ptr<SessionStreamCtlHandler> m_ssStreamHandler;
     InFlightPacketMap m_inflightpktmap;
-
-    Timepoint lastSentTime{ Timepoint::Zero() };;
-    Duration waitTime{ Duration::FromMilliseconds(0) };
 
     std::unique_ptr<PacketSender> m_sendCtl;
     RttStats m_rttstats;
