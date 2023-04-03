@@ -33,7 +33,7 @@ public:
         {
             rt = false;
         }
-        SPDLOG_TRACE("cwnd:{}, downloadingPktCnt:{}, rt: {}", cwnd, downloadingPktCnt, rt);
+        SPDLOG_TRACE("cwnd:{},downloadingPktCnt:{},rt: {}", cwnd, downloadingPktCnt, rt);
         return rt;
     }
 
@@ -92,6 +92,7 @@ public:
 
         // set initial smothed rtt
         m_rttstats.set_initial_rtt(Duration::FromMilliseconds(200));
+
     }
 
     void StopSessionStreamCtl()

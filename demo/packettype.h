@@ -10,8 +10,8 @@ using DataNumber = int32_t;
 
 struct DataPacket
 {
-    SeqNumber seq{ MAX_SEQNUMBER };
-    DataNumber pieceId{ MAX_DATANUMBER };
+    SeqNumber seq{ 0 };
+    DataNumber pieceId{ -1 };
 
     virtual ~DataPacket() = default;
 };

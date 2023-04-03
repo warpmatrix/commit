@@ -185,6 +185,7 @@ void DemoTransportCtl::OnPieceTaskAdding(std::vector<int32_t>& datapiecesVec)
         }
     }
     // Do multipath schedule after new tasks added
+    SPDLOG_ERROR("add task: {}", datapiecesVec);
     m_multipathscheduler->DoMultiPathSchedule();
 }
 

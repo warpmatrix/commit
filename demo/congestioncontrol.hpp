@@ -38,7 +38,7 @@ struct LossEvent
         }
 
         ss << "} "
-           << "losttic: " << losttic.ToDebuggingValue();
+           << "losttic: " << losttic.ToDebuggingValue() << " ";
         return ss.str();
     }
 };
@@ -122,10 +122,10 @@ public:
         }
         if (!losses.lossPackets.empty())
         {
+            losses.losttic = eventtime;
             losses.valid = true;
             SPDLOG_DEBUG("losses: {}", losses.DebugInfo());
         }
-        losses.losttic = eventtime;
     }
 
     ~DefaultLossDetectionAlgo() override
@@ -369,7 +369,7 @@ public:
 
         delivered = 0;
         receivedSeq = 0;
-        cwnd_gain = 2.0/std::log(2);
+        cwnd_gain = 1.0;
         period_cnt = 0;
         isStartUp = true;
         isDrain = false;
@@ -405,21 +405,21 @@ public:
                 {
                     ticNum = GetCWND();
                     cwnd_gain = 1 + peak_gain;
-                    SPDLOG_DEBUG("begin to shack (up).");
+                    SPDLOG_DEBUG("begin to shake (up).");
                 }
                 else if (cwnd_gain == 1 + peak_gain)
                 {
                     //cwnd_gain = 1.0;
                     ticNum = 1;
-                    cwnd_gain = 1 - peak_gain;
-                    SPDLOG_DEBUG("begin to shack (down).");
-                }
-                else if (cwnd_gain == 1 - peak_gain)
-                {
                     cwnd_gain = 1.0;
-                    ticNum = GetCWND();
-                    SPDLOG_DEBUG("begin to steady.");
+                    SPDLOG_DEBUG("begin to shake (down).");
                 }
+                // else if (cwnd_gain == 1 - peak_gain)
+                // {
+                //     cwnd_gain = 1.0;
+                //     ticNum = GetCWND();
+                //     SPDLOG_DEBUG("begin to steady.");
+                // }
             }
         }
     }
@@ -456,24 +456,14 @@ private:
             Duration receivedDur = ackEvent.recvtic - lastReceivedTime;
             Duration sendDur = ackEvent.sendtic - lastPktSendTime;
             double nowRate = 0;
-            if (receivedDur <= sendDur) 
+            if (isStartUp && rttstats.smoothed_rtt() >= 1.1 * RTprop) 
             {
-                if (!isStartUp) period_cnt++;
-                else period_cnt = 0;
-                SPDLOG_DEBUG("inflight is too little");
+                period_cnt++;
             }
-            else if (sendDur.ToMicroseconds() > 2 * double(1) * 1000 / btlBw)
+            else period_cnt = 0;
+            
+            if (sendDur.ToMicroseconds() <= 2 * double(1) * 1000 / btlBw)
             {
-                if (isStartUp && rttstats.smoothed_rtt() >= 1.1 * RTprop) period_cnt++;
-                else period_cnt = 0;
-                avgRecDur = alpha * (receivedDur-sendDur) + (1-alpha) * avgRecDur;
-                nowRate = double(1)*1000 / avgRecDur.ToMicroseconds();
-                btlBw = nowRate;
-            }
-            else
-            {
-                if (isStartUp && rttstats.smoothed_rtt() >= 1.1 * RTprop) period_cnt++;
-                else period_cnt = 0;
                 avgRecDur = alpha * receivedDur + (1-alpha) * avgRecDur;
                 nowRate = double(1)*1000 / avgRecDur.ToMicroseconds();
                 btlBw = nowRate;
@@ -506,11 +496,7 @@ private:
             SPDLOG_DEBUG("begin to drain."); 
             //SPDLOG_DEBUG("Start up :{}.", isStartUp);
         }
-
-        
-        
-
-        
+       
 
         if (Clock::GetClock()->Now() >= nextPeriodTime) 
         {
@@ -537,7 +523,7 @@ private:
     Duration RTprop;
     DataNumber delivered;
     DataNumber receivedSeq;
-    double btlBw;
+    double btlBw{0.0001};
     double oldBw;
     double cwnd_gain;
     uint32_t last_delivered;
