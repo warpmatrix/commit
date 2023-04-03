@@ -155,11 +155,13 @@ void DemoTransportCtl::OnSessionDestory(const fw::ID& sessionid)
     if (sessionItor == m_sessStreamCtlMap.end())
     {
         // warn: try to destroy a session we don't know
+        SPDLOG_WARN(" try to destroy a session we don't know");
     }
     else
     {
         m_sessStreamCtlMap[sessionid]->StopSessionStreamCtl();
         m_sessStreamCtlMap[sessionid].reset();
+        m_sessStreamCtlMap.erase(sessionid);
     }
 
 }
