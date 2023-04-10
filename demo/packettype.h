@@ -12,6 +12,7 @@ struct DataPacket
 {
     SeqNumber seq{ 0 };
     DataNumber pieceId{ -1 };
+    uint32_t groupId{ 0 };
 
     virtual ~DataPacket() = default;
 };
@@ -21,10 +22,11 @@ struct InflightPacket : DataPacket
     Timepoint sendtic{ Timepoint::Zero() };
 
     int delivered{ 0 };
+    
 
     friend std::ostream& operator<<(std::ostream& os, const InflightPacket& pkt)
     {
-        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " }";
+        os << "{ seq: " << pkt.seq << " piceId: " << pkt.pieceId << " sendtic: " << pkt.sendtic << " groupId: " << pkt.groupId <<" }";
         return os;
     }
 
@@ -71,6 +73,7 @@ public:
         InflightPacket inflightPacket;
         inflightPacket.seq = p.seq;
         inflightPacket.pieceId = p.pieceId;
+        inflightPacket.groupId = p.groupId;
         inflightPacket.sendtic = sendtic;
         auto&& itor_pair = inflightPktMap.emplace(std::make_pair(p.seq, p.pieceId), inflightPacket);
         if (!itor_pair.second)

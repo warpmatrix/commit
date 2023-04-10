@@ -159,13 +159,11 @@ void DemoTransportCtl::OnSessionDestory(const fw::ID& sessionid)
     if (sessionItor == m_sessStreamCtlMap.end())
     {
         // warn: try to destroy a session we don't know
-        SPDLOG_WARN(" try to destroy a session we don't know");
     }
     else
     {
         m_sessStreamCtlMap[sessionid]->StopSessionStreamCtl();
         m_sessStreamCtlMap[sessionid].reset();
-        m_sessStreamCtlMap.erase(sessionid);
     }
 
 }
@@ -312,7 +310,13 @@ bool DemoTransportCtl::DoSendDataRequest(const basefw::ID& peerid, const std::ve
     auto handler = m_transctlHandler.lock();
     if (handler)
     {
-        return handler->DoSendDataRequest(peerid, spns);
+        bool succ = true;
+        for (auto itor: spns) {
+            std::vector<int32_t> tmp = {itor};
+            succ = succ && handler->DoSendDataRequest(peerid, tmp);
+        }
+        
+        return succ;
     }
     else
     {

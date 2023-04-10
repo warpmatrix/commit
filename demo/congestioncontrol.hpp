@@ -152,6 +152,8 @@ public:
     /////
     virtual uint32_t GetCWND() = 0;
 
+    virtual uint32_t GetSendNum() = 0;
+
 //    virtual uint32_t GetFreeCWND() = 0;
 
 };
@@ -385,6 +387,7 @@ public:
     void OnDataSent(InflightPacket& sentpkt) override {
         sentpkt.delivered = delivered;
         inflight++;
+        sendW = std::max(sendW-1, uint32_t(0));
         if (isDrain)
         {
             ticNum--;
@@ -403,6 +406,7 @@ public:
             {
                 if (cwnd_gain == 1.0)
                 {
+                    cwnd_gain = 1.0;
                     ticNum = GetCWND();
                     cwnd_gain = 1 + peak_gain;
                     SPDLOG_DEBUG("begin to shake (up).");
@@ -434,82 +438,149 @@ public:
         }
     }
 
+    uint32_t GetSendNum() override {
+        return sendW;
+    }
+
     uint32_t GetCWND() override {
-        double detectBw = cwnd_gain * btlBw;
-        DataNumber bdp = 10;
+        double detectBw = btlBw;
+        DataNumber bdp = 8;
         if (!RTprop.IsInfinite()) {
             bdp = std::max(DataNumber(RTprop.ToMilliseconds() * detectBw), 1);
         }
         SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, bdp: {}", btlBw, cwnd_gain, bdp);
 
-        return bdp;
+        return bdp+std::min(recvW, bdp/4U);
     }
 
 private:
     void OnDataRecv(const AckEvent& ackEvent, RttStats& rttstats) {
         RTprop = std::min(rttstats.latest_rtt(), RTprop);
+        
         receivedSeq = ackEvent.ackPacket.seq;
         delivered++;
         inflight--;
+        
+
         if (lastReceivedTime != Timepoint::Zero() && lastPktSendTime != Timepoint::Zero())
         {
             Duration receivedDur = ackEvent.recvtic - lastReceivedTime;
             Duration sendDur = ackEvent.sendtic - lastPktSendTime;
             double nowRate = 0;
-            if (isStartUp && rttstats.smoothed_rtt() >= 1.1 * RTprop) 
-            {
-                period_cnt++;
-            }
-            else period_cnt = 0;
-            
-            if (sendDur.ToMicroseconds() <= 2 * double(1) * 1000 / btlBw)
+
+            if (sendDur.ToMicroseconds() <= 200)
             {
                 avgRecDur = alpha * receivedDur + (1-alpha) * avgRecDur;
                 nowRate = double(1)*1000 / avgRecDur.ToMicroseconds();
                 btlBw = nowRate;
             }
+
+            if (Clock::GetClock()->Now() >= nextPeriodTime && ackEvent.ackPacket.groupId != lastGroupId && rttstats.smoothed_rtt() >= RTprop + 2*Duration::FromMicroseconds(int(1000/btlBw))) {
+                btlBw *= 0.9;
+                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+                
+                SPDLOG_DEBUG("Rtt is too long");
+            }
             //deliveryRate = alpha * nowRate + (1-alpha) * deliveryRate;
-            
+            lastGroupId = ackEvent.ackPacket.groupId;
             SPDLOG_DEBUG("receivedDur: {}, sendDur: {}, nowRate: {}", receivedDur.ToMicroseconds(), sendDur.ToMicroseconds(), nowRate);
         }
         lastReceivedTime = ackEvent.recvtic;
         lastPktSendTime = ackEvent.sendtic;
-        //int dataDelivered = delivered - ackEvent.ackPacket.delivered;
-        // if (!ackEvent.isLastInGroup) {
-        //     // a batch of packets received
-        //     SPDLOG_DEBUG("A batch received. Don't change anything");
-        //     return;
-        // }
-        last_delivered = ackEvent.ackPacket.delivered;
-        
-        
-        //double deliveryRate = double(dataDelivered) / rttstats.latest_rtt().ToMilliseconds();
 
-        if (isStartUp && period_cnt == period)
-        {
-            period_cnt = 0;
-            isStartUp = false;
-            isDrain = true;
-            //cwnd_gain = 1.0;
-            ticNum = 1;
-            cwnd_gain = 1.0;
-            SPDLOG_DEBUG("begin to drain."); 
-            //SPDLOG_DEBUG("Start up :{}.", isStartUp);
+        last_delivered = ackEvent.ackPacket.delivered;
+
+        uint32_t nowCWND = GetCWND();
+        if (nowCWND > inflight+recvNum) recvNum++;
+
+        if (sendW != 0) {
+            recvNum = 0;
+            SPDLOG_DEBUG("Send pkt too slow");
         }
+
+        if (isStartUp){
+            if (recvNum != 0 && recvNum % recvW == 0) {
+                sendW = std::min(int(recvW*2), 8);
+                lastSentW = sendW;
+                if (recvNum + recvW > period && recvW <= period) {
+                    recvW += 1;
+                    recvNum = 0;
+                }
+                if (recvW > period) {
+                    recvW = period;
+                    if (inflight >= nowCWND - sendW){
+                        isStartUp = false;
+                        SPDLOG_DEBUG("Start up over");
+                    }
+                }
+            }
+        } else {
+            if (recvNum == recvW) {
+                recvNum = 0;
+                if (nowCWND - inflight < std::min(recvW, nowCWND/4)) {
+                    sendW = 0;
+                    recvW = std::min(4U, nowCWND/4);
+                    recvNum = nowCWND-inflight;
+                } else {
+                    sendW = std::min(std::min(2*recvW, 8U), nowCWND - inflight);
+                    recvW = std::min(recvW, nowCWND/2);
+                }
+            } 
+            if (sendW != 0) lastSentW = sendW;
+        }
+
+
+        // if (!isStartUp && recvNum == 0) {
+            
+        //     double incRate = std::max(double(inflight+recvW) / nowCWND, 0.5);
+            
+        //     if (nowCWND - inflight < std::min(recvW, nowCWND/2)){
+        //         recvNum = std::min(recvW+1, nowCWND/2) - (nowCWND - inflight);
+        //         recvW = std::min(std::min(recvW+1, nowCWND/2), 8U);
+        //         sendW = 0;
+        //     } else {
+        //         sendW = std::min(2*recvW, 8U);
+        //         recvW = std::min(recvW, nowCWND/2);
+        //     }
+        //     // if (lastSentW == 8 || lastSentW >= GetCWND()/4) {
+        //     //     recvW = std::max(uint32_t(std::floor(lastSentW*incRate)), uint32_t(1));
+        //     //     sendW = lastSentW;
+        //     //     SPDLOG_DEBUG("lastSentW: {}", lastSentW);
+        //     // } else if (incRate < 1){
+        //     //     sendW = std::min(uint32_t(std::ceil(recvW/incRate)), uint32_t(8));
+        //     //     recvW = std::min(recvW+1, sendW);
+        //     //     SPDLOG_DEBUG("incRate < 1");
+        //     // } else {
+        //     //     recvW++;
+        //     //     sendW = recvW;
+        //     //     SPDLOG_DEBUG("incRate equals 1");
+        //     // }
+            
+            
+        //     if (sendW != 0) lastSentW = sendW;
+        //     if (sendW > nowCWND-inflight) {
+        //         recvW = sendW-(nowCWND-inflight);
+        //         sendW = 0;
+        //     }     
+        // }
+
+        if (sendW==1) SPDLOG_DEBUG("sendW is only 1");
+
        
 
         if (Clock::GetClock()->Now() >= nextPeriodTime) 
         {
-            if (!RTprop.IsInfinite()) {
-                nextPeriodTime = Clock::GetClock()->Now() + RTprop;
-            }
+            // if (!RTprop.IsInfinite()) {
+            //     nextPeriodTime = Clock::GetClock()->Now() + RTprop;
+            // }
             
             
             oldBw = btlBw;
         }
 
-        
+        SPDLOG_DEBUG("sendW: {}, recvNum: {}, recvW: {}", sendW, recvNum, recvW);
         SPDLOG_DEBUG("delivered: {}, pkt_delivered: {}", delivered, ackEvent.ackPacket.delivered);
+        SPDLOG_DEBUG("inflight: {}, lastSentW: {}", inflight, lastSentW);
         SPDLOG_DEBUG("period_cnt: {}, cwnd_gain: {}", period_cnt, cwnd_gain);
         SPDLOG_DEBUG("RTprop: {}, btlBw: {}, oldBw: {}", RTprop.ToDebuggingValue(), btlBw, oldBw);
     }
@@ -517,6 +588,16 @@ private:
     void OnDataLoss(const LossEvent& lossEvent)
     {
         inflight -= lossEvent.lossPackets.size();
+        uint32_t nowCWND = GetCWND();
+        if (inflight < nowCWND) {
+            recvNum = 0;
+            sendW = std::min(std::min(nowCWND - inflight, uint32_t(lossEvent.lossPackets.size())), 8U);
+            lastSentW = sendW;
+        }
+        
+        //ticNum = 1;
+        //cwnd_gain = 1.0;
+        SPDLOG_DEBUG("sendW: {}, recvNum: {}, recvW: {}", sendW, recvNum, recvW);
         SPDLOG_DEBUG("after Loss, inflight={}", inflight);
     }
 
@@ -531,9 +612,13 @@ private:
     bool isDrain;
     bool isWait;
     uint32_t inflight;
-    Duration avgRecDur{ Duration::FromMicroseconds(0) };
+    Duration avgRecDur{ Duration::FromMicroseconds(10000) };
     double alpha{ 0.1 };
     uint32_t ticNum{ 0 };
+    uint32_t sendW{ 1 };
+    uint32_t recvW{ 1 };
+    uint32_t recvNum{ 0 };
+    uint32_t lastSentW{ 1 };
 
     uint32_t period;
     uint32_t period_cnt;
@@ -541,4 +626,5 @@ private:
     Timepoint nextPeriodTime;
     Timepoint lastReceivedTime{ Timepoint::Zero() };
     Timepoint lastPktSendTime{ Timepoint::Zero() };
+    uint32_t lastGroupId{ 0 };
 };

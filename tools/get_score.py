@@ -45,8 +45,8 @@ def get_score():
     print(f'recv_end_ts: {recv_final_ts}')
     T = (recv_final_ts - t_start) / 1e6
     DS_ = len(recv_ts.keys())
-    #DS = len(recv_subpiece) / 1024
-    DS = len(send_subpiece) / 1024
+    DS = len(recv_subpiece) / 1024
+    #DS = len(send_subpiece) / 1024
 
     if DS_ < FS:
         print(f'not recv enough data! File size: {FS / 1024} MB, total data downloaded: {DS} MB, total data '

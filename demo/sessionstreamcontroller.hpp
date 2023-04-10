@@ -137,7 +137,8 @@ public:
         {
             return false;
         }
-        return m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
+        //return m_sendCtl->MaySendPktCnt(m_congestionCtl->GetCWND(), GetInFlightPktNum());
+        return m_congestionCtl->GetSendNum();
     };
 
     /// send ONE datarequest Pkt, requestting for the data pieces whose id are in spns
@@ -185,9 +186,11 @@ public:
         auto seqidx = 0;
         for (auto datano: dataids)
         {
+            SPDLOG_TRACE("seqidx: {}", seqidx);
             DataPacket p;
             p.seq = seqs[seqidx];
             p.pieceId = datano;
+            p.groupId = groupId;
             // add to downloading queue
             m_inflightpktmap.AddSentPacket(p, sendtic);
 
@@ -196,9 +199,11 @@ public:
             sentpkt.seq = seqs[seqidx];
             sentpkt.pieceId = datano;
             sentpkt.sendtic = sendtic;
+            sentpkt.groupId = groupId;
             m_congestionCtl->OnDataSent(sentpkt);
             seqidx++;
         }
+        groupId++;
 
     }
 
@@ -227,6 +232,7 @@ public:
             ackEvent.valid = true;
             ackEvent.ackPacket.seq = seq;
             ackEvent.ackPacket.pieceId = datapiece;
+            ackEvent.ackPacket.groupId = inflightPkt.groupId;
             ackEvent.sendtic = inflightPkt.sendtic;
             ackEvent.recvtic = recvtic;
             LossEvent lossEvent; // if we detect loss when ACK event, we may do loss check here.
@@ -312,6 +318,7 @@ public:
 
 private:
     bool isRunning{ false };
+    uint32_t groupId{ 0 };
 
     basefw::ID m_sessionId;/** The remote peer id defines the session id*/
     basefw::ID m_taskid;/**The file id downloading*/
