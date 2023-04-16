@@ -235,6 +235,7 @@ public:
             ackEvent.ackPacket.groupId = inflightPkt.groupId;
             ackEvent.sendtic = inflightPkt.sendtic;
             ackEvent.recvtic = recvtic;
+            ackEvent.sess_id = m_sessionId;
             LossEvent lossEvent; // if we detect loss when ACK event, we may do loss check here.
             m_congestionCtl->OnDataAckOrLoss(ackEvent, lossEvent, m_rttstats);
 
@@ -282,6 +283,7 @@ public:
         Timepoint now_t = Clock::GetClock()->Now();
         AckEvent ack;
         LossEvent loss;
+        loss.sess_id = m_sessionId;
         m_lossDetect->DetectLoss(m_inflightpktmap, now_t, ack, -1, loss, m_rttstats);
         if (loss.valid)
         {

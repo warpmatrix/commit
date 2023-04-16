@@ -64,7 +64,7 @@ bool DemoTransportCtl::StartTransportController(TransportDownloadTaskInfo tansDl
     m_transctlHandler = transCtlHandler;
 
     m_multipathscheduler.reset(
-            new RRMultiPathScheduler(m_tansDlTkInfo.m_rid, m_sessStreamCtlMap, m_downloadPieces, m_lostPiecesl));
+            new RRMultiPathScheduler(m_tansDlTkInfo.m_rid, m_sessStreamCtlMap, m_downloadPieces, m_lostPiecesl, m_waitDownloadPieces));
     m_multipathscheduler->StartMultiPathScheduler(shared_from_this());
     return true;
 }
@@ -181,6 +181,7 @@ void DemoTransportCtl::OnPieceTaskAdding(std::vector<int32_t>& datapiecesVec)
         {
             // warning: already has
         }
+        m_waitDownloadPieces.emplace(dataPiece);
     }
     // Do multipath schedule after new tasks added
     SPDLOG_ERROR("add task: {}", datapiecesVec);
@@ -223,6 +224,14 @@ void DemoTransportCtl::OnDataPiecesReceived(const fw::ID& sessionid, uint32_t se
 {
     SPDLOG_TRACE("session = {}, seq ={},datapiece = {},tic_us = {}",sessionid.ToLogStr(),seq,datapiece,tic_us);
     Timepoint recvtic = Clock::GetClock()->CreateTimeFromMicroseconds(tic_us);
+    if (m_waitDownloadPieces.find(datapiece) != m_waitDownloadPieces.end()) {
+        m_waitDownloadPieces.erase(datapiece);
+        SPDLOG_DEBUG("{} piece has receved", datapiece);
+    } else {
+        SPDLOG_TRACE("piece repeat");
+    }
+    SPDLOG_DEBUG("waitDownloadPieces: {}", m_waitDownloadPieces);
+        
     // call session control firstly to change cwnd first
     auto&& sessionItor = m_sessStreamCtlMap.find(sessionid);
     if (sessionItor != m_sessStreamCtlMap.end())

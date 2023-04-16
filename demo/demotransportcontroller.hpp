@@ -128,6 +128,7 @@ private:
     std::weak_ptr<MPDTransCtlHandler> m_transctlHandler; // transport module call back
     std::set<DataNumber> m_downloadPieces;/// main task download queue
     std::set<DataNumber> m_lostPiecesl;/// lost packets will be stored here till retransmission
+    std::set<DataNumber> m_waitDownloadPieces;/// record the pieces which have not received
     OursCongestionCtlConfig oursccConfig;/// congestion config file
     std::map<basefw::ID, std::shared_ptr<SessionStreamController>> m_sessStreamCtlMap;/// map session id to sessionstream
 };

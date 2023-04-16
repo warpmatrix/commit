@@ -21,8 +21,8 @@ public:
 
     explicit RRMultiPathScheduler(const fw::ID& taskid,
             std::map<fw::ID, fw::shared_ptr<SessionStreamController>>& dlsessionmap,
-            std::set<DataNumber>& downloadQueue, std::set<int32_t>& lostPiecesQueue)
-            : MultiPathSchedulerAlgo(taskid, dlsessionmap, downloadQueue, lostPiecesQueue)
+            std::set<DataNumber>& downloadQueue, std::set<int32_t>& lostPiecesQueue, std::set<DataNumber>& waitDownloadPieces)
+            : MultiPathSchedulerAlgo(taskid, dlsessionmap, downloadQueue, lostPiecesQueue, waitDownloadPieces)
     {
         SPDLOG_DEBUG("taskid :{}", taskid.ToLogStr());
     }
@@ -172,11 +172,16 @@ public:
         SPDLOG_DEBUG("session {},lost pieces {}", sessionid.ToLogStr(), pns);
         for (auto& pidx: pns)
         {
-            auto&& itor_pair = m_lostPiecesQueue.emplace(pidx);
-            if (!itor_pair.second)
-            {
-                SPDLOG_WARN(" pieceId {} already marked lost", pidx);
+            if (m_waitDownloadPieces.find(pidx) != m_waitDownloadPieces.end()){
+                auto&& itor_pair = m_lostPiecesQueue.emplace(pidx);
+                if (!itor_pair.second)
+                {
+                    SPDLOG_WARN(" pieceId {} already marked lost", pidx);
+                }
+            } else {
+                SPDLOG_DEBUG("piece has recevied");
             }
+            
         }
     }
 
@@ -186,6 +191,7 @@ public:
                 sessionid.ToLogStr(), seq, pno, recvtime.ToDebuggingValue());
         /// rx and tx signal are forwarded directly from transport controller to session controller
 
+        
         DoSinglePathSchedule(sessionid);
     }
 
@@ -353,6 +359,5 @@ private:
     std::map<fw::ID, std::set<DataNumber>> m_session_needdownloadpieceQ;// session task queues
     std::multimap<Duration, fw::shared_ptr<SessionStreamController>> m_sortmmap;
     fw::weak_ptr<MultiPathSchedulerHandler> m_phandler;
-
 };
 

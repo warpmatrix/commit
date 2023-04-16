@@ -23,6 +23,7 @@ enum class CongestionCtlType : uint8_t
 struct LossEvent
 {
     bool valid{ false };
+    basefw::ID sess_id;
     // There may be multiple timeout events at one time
     std::vector<InflightPacket> lossPackets;
     Timepoint losttic{ Timepoint::Infinite() };
@@ -48,6 +49,7 @@ struct AckEvent
     /** since we receive packets one by one, each packet carries only one data piece*/
     bool valid{ false };
     InflightPacket ackPacket;
+    basefw::ID sess_id;
     Timepoint sendtic{ Timepoint::Infinite() };
     Timepoint losttic{ Timepoint::Infinite() };
     Timepoint recvtic{ Timepoint::Infinite() };
@@ -99,8 +101,10 @@ public:
     void DetectLoss(const InFlightPacketMap& downloadingmap, Timepoint eventtime, const AckEvent& ackEvent,
             uint64_t maxacked, LossEvent& losses, RttStats& rttStats) override
     {
-        SPDLOG_TRACE("inflight: {} eventtime: {} ackEvent:{} ", downloadingmap.DebugInfo(),
-                eventtime.ToDebuggingValue(), ackEvent.DebugInfo());
+        SPDLOG_TRACE("inflight: {} eventtime: {} ackEvent: {} session_id: {}",
+            downloadingmap.DebugInfo(), eventtime.ToDebuggingValue(),
+            ackEvent.DebugInfo(), losses.sess_id.ToLogStr()
+        );
         /** RFC 9002 Section 6
          * */
         Duration maxrtt = std::max(rttStats.previous_srtt(), rttStats.latest_rtt());
@@ -122,10 +126,12 @@ public:
         }
         if (!losses.lossPackets.empty())
         {
-            losses.losttic = eventtime;
             losses.valid = true;
-            SPDLOG_DEBUG("losses: {}", losses.DebugInfo());
         }
+        losses.losttic = eventtime;
+        SPDLOG_DEBUG("losses: {}, session_id: {}",
+            losses.DebugInfo(), losses.sess_id.ToLogStr()
+        );
     }
 
     ~DefaultLossDetectionAlgo() override
@@ -461,7 +467,7 @@ private:
         delivered++;
         inflight--;
         
-
+        uint32_t nowCWND = GetCWND();
         if (lastReceivedTime != Timepoint::Zero() && lastPktSendTime != Timepoint::Zero())
         {
             Duration receivedDur = ackEvent.recvtic - lastReceivedTime;
@@ -478,7 +484,6 @@ private:
             if (Clock::GetClock()->Now() >= nextPeriodTime && ackEvent.ackPacket.groupId != lastGroupId && rttstats.smoothed_rtt() >= RTprop + 2*Duration::FromMicroseconds(int(1000/btlBw))) {
                 btlBw *= 0.9;
                 nextPeriodTime = Clock::GetClock()->Now() + RTprop;
-                
                 SPDLOG_DEBUG("Rtt is too long");
             }
             //deliveryRate = alpha * nowRate + (1-alpha) * deliveryRate;
@@ -490,7 +495,7 @@ private:
 
         last_delivered = ackEvent.ackPacket.delivered;
 
-        uint32_t nowCWND = GetCWND();
+        nowCWND = GetCWND();
         if (nowCWND > inflight+recvNum) recvNum++;
 
         if (sendW != 0) {
@@ -522,7 +527,8 @@ private:
                     recvW = std::min(4U, nowCWND/4);
                     recvNum = nowCWND-inflight;
                 } else {
-                    sendW = std::min(std::min(2*recvW, 8U), nowCWND - inflight);
+                    double incRate = nowCWND - inflight < 10 ? 1.5 : 2;
+                    sendW = std::min(std::min(uint32_t(incRate*recvW), 8U), nowCWND - inflight);
                     recvW = std::min(recvW, nowCWND/2);
                 }
             } 
@@ -578,17 +584,27 @@ private:
             oldBw = btlBw;
         }
 
+        SPDLOG_DEBUG("latest_rtt: {}, smooth_rtt: {}, recv_tic: {}, session_id: {}",
+            rttstats.latest_rtt().ToDebuggingValue(), rttstats.smoothed_rtt().ToDebuggingValue(),
+            ackEvent.recvtic.ToDebuggingValue(), ackEvent.sess_id.ToLogStr()
+        );
         SPDLOG_DEBUG("sendW: {}, recvNum: {}, recvW: {}", sendW, recvNum, recvW);
         SPDLOG_DEBUG("delivered: {}, pkt_delivered: {}", delivered, ackEvent.ackPacket.delivered);
         SPDLOG_DEBUG("inflight: {}, lastSentW: {}", inflight, lastSentW);
         SPDLOG_DEBUG("period_cnt: {}, cwnd_gain: {}", period_cnt, cwnd_gain);
-        SPDLOG_DEBUG("RTprop: {}, btlBw: {}, oldBw: {}", RTprop.ToDebuggingValue(), btlBw, oldBw);
+        SPDLOG_DEBUG("RTprop: {}, recv_tic: {}, sess_id: {}, btlBw: {}, oldBw: {}",
+            RTprop.ToDebuggingValue(), ackEvent.recvtic.ToDebuggingValue(),
+            ackEvent.sess_id.ToLogStr(), btlBw, oldBw
+        );
     }
 
     void OnDataLoss(const LossEvent& lossEvent)
     {
         inflight -= lossEvent.lossPackets.size();
         uint32_t nowCWND = GetCWND();
+        // if (lossEvent.lossPackets.size() >= 3) {
+        //     btlBw *= 0.5;
+        // }
         if (inflight < nowCWND) {
             recvNum = 0;
             sendW = std::min(std::min(nowCWND - inflight, uint32_t(lossEvent.lossPackets.size())), 8U);
