@@ -456,7 +456,7 @@ public:
         }
         SPDLOG_DEBUG("btlBw: {}, cwnd_gain: {}, bdp: {}", btlBw, cwnd_gain, bdp);
 
-        return bdp+std::min(recvW, bdp/4U);
+        return bdp;
     }
 
 private:
