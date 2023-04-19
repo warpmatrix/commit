@@ -318,6 +318,26 @@ public:
         return m_sessionId;
     }
 
+    double GetSessBw() {
+        return m_congestionCtl->GetProbeBw();
+    }
+
+    void SetLogicBw(double bw, bool isMax) {
+        m_congestionCtl->SetLogicBw(bw, isMax);
+    }
+
+    fw::ID GetId(){
+        return m_sessionId;
+    }
+
+    bool IsHighRtt() {
+        return m_rttstats.smoothed_rtt() > 1.1 * m_congestionCtl->GetRtprop();
+    }
+
+    bool IsSleepEnough(Timepoint now) {
+        return m_congestionCtl->IsSleepEnough(now);
+    }
+
 private:
     bool isRunning{ false };
     uint32_t groupId{ 0 };

@@ -57,6 +57,7 @@ public:
             {
                 m_downloadQueue.emplace(subpiecetask);
             }
+            m_btlBws[sessionid] = m_dlsessionmap[sessionid]->GetSessBw();
         }
         m_session_needdownloadpieceQ[sessionid] = std::set<int32_t>();
 
@@ -111,6 +112,7 @@ public:
         // sort session first
         SPDLOG_TRACE("DoMultiPathSchedule");
         SortSession(m_sortmmap);
+        SetLogicBw();
         // send pkt requests on each session based on ascend order;
         FillUpSessionTask();
 
@@ -190,8 +192,23 @@ public:
         SPDLOG_DEBUG("session:{}, seq:{}, pno:{}, recvtime:{}",
                 sessionid.ToLogStr(), seq, pno, recvtime.ToDebuggingValue());
         /// rx and tx signal are forwarded directly from transport controller to session controller
-
+        double nowRate = 0;
+        m_btlBws[sessionid] = m_dlsessionmap[sessionid]->GetSessBw();
+        if (lastRecvTime != Timepoint::Zero()) {
+            recvDur = 0.9 * recvDur + 0.1 * (recvtime - lastRecvTime);
+            nowRate = double(1)*1000 / recvDur.ToMicroseconds();
+            botBw = nowRate;
+            // if (isBotnec(sessionid)) {
+            //     SPDLOG_DEBUG("session bw is not the bottle neck");
+            // }
+            if (botBw > maxBotBw) {
+                maxBotBw = botBw;
+            }
+        }
+        lastRecvTime = recvtime;
+        SPDLOG_DEBUG("nowRate: {}, botBw: {}, maxBotBw: {}", nowRate, botBw, maxBotBw);
         
+        SetLogicBw();
         DoSinglePathSchedule(sessionid);
     }
 
@@ -208,6 +225,85 @@ public:
     }
 
 private:
+    void SetLogicBw() {
+        double totalBw = maxBotBw;
+        //Duration maxRtt = Duration::FromMicroseconds(0);
+        double sumBw = 0;
+        double maxBw = 0;
+        for (auto itor : m_dlsessionmap) {
+            auto sessId = itor.first;
+            auto session = itor.second;
+            auto bw = m_btlBws[sessId];
+            if (bw > maxBw) {
+                maxBw = bw;
+            }
+            //session->SetLogicBw(1000, false);
+        }
+        //SPDLOG_DEBUG("maxBw: {} maxId: {}", maxBw, maxId);
+        for (auto itor : m_dlsessionmap) {
+            auto sessId = itor.first;
+            auto session = itor.second;
+            auto bw = m_btlBws[sessId];
+            if (!isBotnec(bw, maxBw)) {
+                session->SetLogicBw(1000, true);
+            } else {
+                session->SetLogicBw(1000, false);
+            }
+        }
+
+        // std::map<fw::ID, double> ratios;
+        // for (auto itor : m_sortmmap) {
+        //     auto rtt = itor.first;
+        //     auto session = itor.second;
+        //     auto sessId = session->GetId();
+        //     auto bw = m_btlBws[sessId];
+        //     if (bw > totalBw) {
+        //         totalBw = bw;
+        //     }
+        // }
+
+        // totalBw *= 1.1;
+        // double tmpBw = totalBw;
+        // for (auto itor : m_sortmmap) {
+        //     auto rtt = itor.first;
+        //     auto session = itor.second;
+        //     auto sessId = session->GetId();
+        //     auto bw = m_btlBws[sessId];
+        //     if (isBotnec(bw, totalBw)) {
+        //         session->SetLogicBw(std::min(bw*1.1, tmpBw));
+        //         tmpBw = std::max(tmpBw - bw*1.1, 0.01);
+        //     } else {
+        //         if (session->IsHighRtt()) {
+        //             session->SetLogicBw(tmpBw);
+        //         } else {
+        //             session->SetLogicBw(std::min(bw*1.1, tmpBw));
+        //         }  
+        //     }
+        // }
+
+        // for (auto& itor : m_sortmmap) {
+        //     auto rtt = itor.first;
+        //     auto session = itor.second;
+        //     auto sessId = session->GetId();
+        //     auto bw = m_btlBws[sessId];
+        //     double ratio = ratios[sessId] / sumBw;
+        //     if (isBotnec(bw, totalBw)) {
+        //         session->SetLogicBw(bw*1.2);
+        //         tmpBw = std::max(tmpBw - bw*1.2, 0.01);
+        //     } 
+        // }
+        // for (auto& itor : m_sortmmap) {
+        //     auto rtt = itor.first;
+        //     auto session = itor.second;
+        //     auto sessId = session->GetId();
+        //     auto bw = m_btlBws[sessId];
+        //     double ratio = ratios[sessId] / sumBw;
+        //     if (!isBotnec(bw, totalBw)) {
+        //         session->SetLogicBw(tmpBw*ratio);
+        //     } 
+        // }
+    }
+
     int32_t DoSendSessionSubTask(const fw::ID& sessionid) override
     {
         SPDLOG_TRACE("session id: {}", sessionid.ToLogStr());
@@ -244,6 +340,13 @@ private:
         }
 
         return i32Result;
+    }
+
+    bool isBotnec(double sessBw, double botnecBw) {
+        if (sessBw < botnecBw * 0.85) {
+            return true;
+        }
+        return false;
     }
 
     void FillUpSessionTask()
@@ -357,7 +460,13 @@ private:
 
     /// It's multipath scheduler's duty to maintain session_needdownloadsubpiece, and m_sortmmap
     std::map<fw::ID, std::set<DataNumber>> m_session_needdownloadpieceQ;// session task queues
+    std::map<fw::ID, double> m_btlBws;
     std::multimap<Duration, fw::shared_ptr<SessionStreamController>> m_sortmmap;
     fw::weak_ptr<MultiPathSchedulerHandler> m_phandler;
+
+    Timepoint lastRecvTime{ Timepoint::Zero() };
+    Duration recvDur{ Duration::FromMicroseconds(10000) };
+    double botBw{ 0.01 };
+    double maxBotBw { 0.01 };
 };
 

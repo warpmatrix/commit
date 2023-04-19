@@ -285,6 +285,9 @@ void DemoTransportCtl::OnLossDetectionAlarm()
     for (auto&& sessStreamItor: m_sessStreamCtlMap)
     {
         sessStreamItor.second->OnLossDetectionAlarm();
+        auto now = Clock::GetClock()->Now();
+        sessStreamItor.second->IsSleepEnough(now);
+        SPDLOG_DEBUG("now: {}", now.ToDebuggingValue());
     }
     // Step 2: Forward message to Multipath Scheduler
     m_multipathscheduler->DoMultiPathSchedule();
@@ -319,13 +322,13 @@ bool DemoTransportCtl::DoSendDataRequest(const basefw::ID& peerid, const std::ve
     auto handler = m_transctlHandler.lock();
     if (handler)
     {
-        bool succ = true;
-        for (auto itor: spns) {
-            std::vector<int32_t> tmp = {itor};
-            succ = succ && handler->DoSendDataRequest(peerid, tmp);
-        }
+        // bool succ = true;
+        // for (auto itor: spns) {
+        //     std::vector<int32_t> tmp = {itor};
+        //     succ = succ && handler->DoSendDataRequest(peerid, tmp);
+        // }
         
-        return succ;
+        return handler->DoSendDataRequest(peerid, spns);
     }
     else
     {
